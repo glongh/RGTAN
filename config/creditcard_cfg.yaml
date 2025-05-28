@@ -1,0 +1,48 @@
+batch_size: 64
+hid_dim: 256
+lr: 0.003
+wd: !!float 1e-4
+n_layers: 2
+dropout: [0.2, 0.1]
+device: "cuda:0"
+early_stopping: 10
+n_fold: 5
+seed: 2023
+max_epochs: 15
+gated: True
+dataset: creditcard
+test_size: 0.3  # Time-based split - last 30% for testing
+nei_att_heads:
+    creditcard: 8
+# Learning rate scheduler configuration
+lr_scheduler:
+    milestones: [4000, 12000]
+    gamma: 0.3
+# Training configuration
+max_training_epochs: 2000
+# Graph convolution heads
+conv_heads: [4, 4]  # heads per layer
+# Feature dimensions
+num_features: 12  # 2 numerical + 10 categorical encoded features
+cat_feature_dims:
+    trans_status_msg_id: 50
+    site_tag_id: 50
+    origin_id: 50
+    currency_id: 10
+    card_type_id: 20
+    processor_id: 50
+    trans_status_code: 10
+    BRAND: 10
+    DEBITCREDIT: 5
+    CARDTYPE: 20
+# Graph construction parameters
+edge_columns:
+    - card_number
+    - member_id
+    - customer_ip
+    - customer_email
+    - BIN
+min_edge_freq: 2  # Minimum number of shared entities to create edge
+# Class imbalance handling
+use_class_weight: True
+pos_weight: 10.0  # Weight for positive (fraud) class

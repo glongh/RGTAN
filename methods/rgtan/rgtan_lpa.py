@@ -1,4 +1,4 @@
-import copy
+import torch
 
 
 def load_lpa_subtensor(
@@ -13,16 +13,26 @@ def load_lpa_subtensor(
     blocks,
 ):
     """
-    Put the input data into the device
-    :param node_feat: the feature of input nodes
-    :param work_node_feat: the feature of work nodes
-    :param neigh_feat: neighborhood stat feature -> pd.DataFrame
-    :param neigh_padding_dict: padding length of neighstat features
-    :param labels: the labels of nodes
-    :param seeds: the index of one batch data 
-    :param input_nodes: the index of batch input nodes -> batch all size!!!
-    :param device: where to train model
-    :param blocks: dgl blocks
+    Efficiently load subgraph data for mini-batch training with label propagation.
+    
+    This function prepares batch data by extracting relevant node features,
+    categorical features, and neighborhood statistics. It also masks certain
+    neighborhood features to prevent label leakage during training.
+    
+    Args:
+        node_feat: Node feature tensor of shape (num_nodes, feat_dim)
+        work_node_feat: Dictionary of categorical node features
+        neigh_feat: Dictionary of neighborhood statistics
+        neigh_padding_dict: Padding configuration for neighborhood features
+        labels: Node labels tensor
+        seeds: Indices of target nodes in the batch
+        input_nodes: All nodes involved in the computation (includes neighbors)
+        device: Device to place tensors on
+        blocks: DGL blocks for multi-layer sampling
+        
+    Returns:
+        tuple: (batch_inputs, batch_work_inputs, batch_neighstat_inputs, 
+                batch_labels, propagate_labels)
     """
     # masking to avoid label leakage
     if "1hop_riskstat" in neigh_feat.keys() and len(blocks) >= 2:
@@ -35,6 +45,7 @@ def load_lpa_subtensor(
         nei_hop2 = blocks[-3].dstdata['_ID']
         neigh_feat['2hop_riskstat'][nei_hop2] = 0
 
+    # Efficiently move data to device without unnecessary copies
     batch_inputs = node_feat[input_nodes].to(device)
     batch_work_inputs = {i: work_node_feat[i][input_nodes].to(
         device) for i in work_node_feat if i not in {"labels"}}  # cat feats
@@ -46,7 +57,9 @@ def load_lpa_subtensor(
             device) for col in neigh_feat.keys()}
 
     batch_labels = labels[seeds].to(device)
-    train_labels = copy.deepcopy(labels)
-    propagate_labels = train_labels[input_nodes]  # (|input_nodes|,) 45324
+    
+    # Avoid deep copy - use clone() for memory efficiency
+    propagate_labels = labels[input_nodes].clone()
     propagate_labels[:seeds.shape[0]] = 2
+    
     return batch_inputs, batch_work_inputs, batch_neighstat_inputs, batch_labels, propagate_labels.to(device)

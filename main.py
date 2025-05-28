@@ -41,6 +41,11 @@ def parse_args():
         
     else:
         raise NotImplementedError("Unsupported method.")
+    
+    # Allow override with creditcard config if specified
+    if len(sys.argv) > 2 and sys.argv[2] == '--creditcard':
+        if method == 'rgtan':
+            yaml_file = "config/creditcard_cfg.yaml"
 
     # config = Config().get_config()
     with open(yaml_file) as file:
@@ -142,8 +147,8 @@ def main(args):
         gtan_main(
             feat_data, g, train_idx, test_idx, labels, args, cat_features)
     elif args['method'] == 'rgtan':
-        from methods.rgtan.rgtan_main import rgtan_main, loda_rgtan_data
-        feat_data, labels, train_idx, test_idx, g, cat_features, neigh_features = loda_rgtan_data(
+        from methods.rgtan.rgtan_main import rgtan_main, load_rgtan_data
+        feat_data, labels, train_idx, test_idx, g, cat_features, neigh_features = load_rgtan_data(
             args['dataset'], args['test_size'])
         rgtan_main(feat_data, g, train_idx, test_idx, labels, args,
                    cat_features, neigh_features, nei_att_head=args['nei_att_heads'][args['dataset']])

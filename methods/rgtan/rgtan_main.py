@@ -21,6 +21,29 @@ from .rgtan_model import RGTAN
 
 
 def rgtan_main(feat_df, graph, train_idx, test_idx, labels, args, cat_features, neigh_features: pd.DataFrame, nei_att_head):
+    """
+    Main training and evaluation function for RGTAN model.
+    
+    This function implements the complete training pipeline including:
+    - K-fold cross-validation
+    - Mini-batch training with neighbor sampling
+    - Early stopping
+    - Model evaluation on test set
+    
+    Args:
+        feat_df: DataFrame containing node features
+        graph: DGL graph object
+        train_idx: Indices of training nodes
+        test_idx: Indices of test nodes
+        labels: Node labels
+        args: Dictionary of configuration parameters
+        cat_features: List of categorical feature column names
+        neigh_features: DataFrame containing neighborhood risk statistics
+        nei_att_head: Number of attention heads for neighborhood features
+        
+    Returns:
+        None (prints evaluation metrics)
+    """
     # torch.autograd.set_detect_anomaly(True)
     device = args['device']
     graph = graph.to(device)
@@ -76,7 +99,7 @@ def rgtan_main(feat_df, graph, train_idx, test_idx, labels, args, cat_features, 
         model = RGTAN(in_feats=feat_df.shape[1],
                       hidden_dim=args['hid_dim']//4,
                       n_classes=2,
-                      heads=[4]*args['n_layers'],
+                      heads=args.get('conv_heads', [4]*args['n_layers']),
                       activation=nn.PReLU(),
                       n_layers=args['n_layers'],
                       drop=args['dropout'],
@@ -89,12 +112,12 @@ def rgtan_main(feat_df, graph, train_idx, test_idx, labels, args, cat_features, 
         lr = args['lr'] * np.sqrt(args['batch_size']/1024)
         optimizer = optim.Adam(model.parameters(), lr=lr,
                                weight_decay=args['wd'])
-        lr_scheduler = MultiStepLR(optimizer=optimizer, milestones=[
-                                   4000, 12000], gamma=0.3)
+        lr_scheduler = MultiStepLR(optimizer=optimizer, milestones=args.get('lr_scheduler', {}).get('milestones', [4000, 12000]), 
+                                   gamma=args.get('lr_scheduler', {}).get('gamma', 0.3))
 
         earlystoper = early_stopper(
             patience=args['early_stopping'], verbose=True)
-        start_epoch, max_epochs = 0, 2000
+        start_epoch, max_epochs = 0, args.get('max_training_epochs', 2000)
         for epoch in range(start_epoch, args['max_epochs']):
             train_loss_list = []
             # train_acc_list = []
@@ -137,8 +160,9 @@ def rgtan_main(feat_df, graph, train_idx, test_idx, labels, args, cat_features, 
                                                                                                batch_labels.cpu().numpy(), score),
                                                                                            tr_batch_pred.detach(),
                                                                                            roc_auc_score(batch_labels.cpu().numpy(), score)))
-                    except:
-                        pass
+                    except ValueError as e:
+                        # This can happen when all labels are the same in a batch
+                        print(f'Metrics calculation failed at epoch {epoch}, batch {step}: {e}')
 
             # mini-batch for validation
             val_loss_list = 0
@@ -180,8 +204,9 @@ def rgtan_main(feat_df, graph, train_idx, test_idx, labels, args, cat_features, 
                                                                               batch_labels.cpu().numpy(), score),
                                                                           val_batch_pred.detach(),
                                                                           roc_auc_score(batch_labels.cpu().numpy(), score)))
-                        except:
-                            pass
+                        except ValueError as e:
+                            # This can happen when all labels are the same in a batch
+                            print(f'Metrics calculation failed at epoch {epoch}, batch {step}: {e}')
 
             # val_acc_list/val_all_list, model)
             earlystoper.earlystop(val_loss_list/val_all_list, model)
@@ -239,7 +264,32 @@ def rgtan_main(feat_df, graph, train_idx, test_idx, labels, args, cat_features, 
     print("test AP:", average_precision_score(y_target, test_score))
 
 
-def loda_rgtan_data(dataset: str, test_size: float):
+def load_rgtan_data(dataset: str, test_size: float):
+    """
+    Load and preprocess data for RGTAN model.
+    
+    This function handles data loading for different datasets:
+    - S-FFSD: Financial fraud dataset with transaction features
+    - Yelp: Review fraud dataset
+    - Amazon: Product review fraud dataset
+    
+    The function constructs a graph based on shared attributes (for S-FFSD)
+    or uses pre-computed adjacency lists (for Yelp/Amazon).
+    
+    Args:
+        dataset: Name of the dataset ('S-FFSD', 'yelp', or 'amazon')
+        test_size: Proportion of data to use for testing
+        
+    Returns:
+        tuple: (feat_data, labels, train_idx, test_idx, graph, cat_features, neigh_features)
+            - feat_data: DataFrame of node features
+            - labels: Series of node labels
+            - train_idx: List of training node indices
+            - test_idx: List of test node indices
+            - graph: DGL graph object
+            - cat_features: List of categorical feature names
+            - neigh_features: DataFrame of neighborhood statistics (if available)
+    """
     # prefix = "./antifraud/data/"
     prefix = "data/"
     if dataset == 'S-FFSD':
@@ -331,8 +381,10 @@ def loda_rgtan_data(dataset: str, test_size: float):
                 prefix + "yelp_neigh_feat.csv")
             print("neighborhood feature loaded for nn input.")
             neigh_features = feat_neigh
-        except:
-            print("no neighbohood feature used.")
+        except FileNotFoundError:
+            print("no neighborhood feature used - file not found.")
+        except Exception as e:
+            print(f"Error loading neighborhood features: {e}")
 
     elif dataset == 'amazon':
         cat_features = []
@@ -366,7 +418,171 @@ def loda_rgtan_data(dataset: str, test_size: float):
                 prefix + "amazon_neigh_feat.csv")
             print("neighborhood feature loaded for nn input.")
             neigh_features = feat_neigh
-        except:
-            print("no neighbohood feature used.")
+        except FileNotFoundError:
+            print("no neighborhood feature used - file not found.")
+        except Exception as e:
+            print(f"Error loading neighborhood features: {e}")
+
+    elif dataset == 'creditcard':
+        import itertools
+        from collections import defaultdict
+        
+        cat_features_list = []
+        neigh_features = []
+        
+        # Check if preprocessed data exists
+        preprocessed_file = prefix + 'creditcard_preprocessed.csv'
+        adj_file = prefix + 'creditcard_homo_adjlists.pickle'
+        neigh_file = prefix + 'creditcard_neigh_feat.csv'
+        
+        if os.path.exists(preprocessed_file) and os.path.exists(adj_file):
+            print("Loading preprocessed creditcard data...")
+            df = pd.read_csv(preprocessed_file)
+            
+            # Load adjacency lists
+            with open(adj_file, 'rb') as f:
+                adjacency_lists = pickle.load(f)
+            
+            # Try to load neighborhood features
+            if os.path.exists(neigh_file):
+                neigh_features = pd.read_csv(neigh_file)
+                print("Loaded neighborhood features.")
+        else:
+            print("Preprocessed data not found. Loading raw data...")
+            print("Consider running: python feature_engineering/preprocess_creditcard.py")
+            # Read the raw creditcard dataset
+            df = pd.read_csv(prefix + 'vod_creditcard.csv')
+        
+        # Convert IS_TARGETED to binary labels if not already done
+        if 'Labels' not in df.columns:
+            df['Labels'] = df['IS_TARGETED'].map({'yes': 1, 'no': 0})
+        
+        # Handle datetime columns
+        date_columns = ['issue_date', 'capture_date', 'created_date', 'updated_date']
+        for col in date_columns:
+            if col in df.columns:
+                # Convert to datetime, handling NULL values
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+                # Convert to seconds since first transaction
+                if not df[col].isna().all():
+                    min_date = df[col].min()
+                    df[col + '_seconds'] = (df[col] - min_date).dt.total_seconds()
+                    df[col + '_seconds'] = df[col + '_seconds'].fillna(0)
+        
+        # Select numerical features
+        num_features = ['amount', 'issue_date_seconds']
+        
+        # Select categorical features for embeddings
+        cat_features_list = ['trans_status_msg_id', 'site_tag_id', 'origin_id', 
+                       'currency_id', 'card_type_id', 'processor_id', 
+                       'trans_status_code', 'BRAND', 'DEBITCREDIT', 'CARDTYPE']
+        
+        # Handle missing values in categorical features
+        for col in cat_features_list:
+            if col in df.columns:
+                df[col] = df[col].fillna(-1)
+                # Convert to string first to handle mixed types
+                df[col] = df[col].astype(str)
+        
+        # Build graph - use preprocessed adjacency lists if available
+        if 'adjacency_lists' in locals():
+            # Use preprocessed adjacency lists
+            g = dgl.graph([])
+            g.add_nodes(len(df))
+            edge_src = []
+            edge_dst = []
+            for src, dsts in adjacency_lists.items():
+                for dst in dsts:
+                    edge_src.append(src)
+                    edge_dst.append(dst)
+            if edge_src:
+                g.add_edges(edge_src, edge_dst)
+        else:
+            # Build graph from scratch
+            g = dgl.graph([])
+            g.add_nodes(len(df))
+            
+            # Define key columns for edge creation
+            key_columns = ['card_number', 'member_id', 'customer_ip', 'customer_email', 'BIN']
+            
+            edge_src = []
+            edge_dst = []
+            
+            for col in key_columns:
+                if col in df.columns:
+                    # Group by the key column
+                    mapping = defaultdict(list)
+                    for idx, val in enumerate(df[col]):
+                        if pd.notna(val) and val != '':  # Skip null/empty values
+                            mapping[val].append(idx)
+                    
+                    # Create edges between transactions with same key value
+                    for idxs in mapping.values():
+                        if len(idxs) > 1:
+                            # Create all permutations of edges
+                            for i, j in itertools.permutations(idxs, 2):
+                                edge_src.append(i)
+                                edge_dst.append(j)
+            
+            # Add edges to graph
+            if edge_src:
+                g.add_edges(edge_src, edge_dst)
+        
+        print(f"Created graph with {g.number_of_nodes()} nodes and {g.number_of_edges()} edges")
+        
+        # Prepare feature data
+        # Use scaled features if available (from preprocessing)
+        scaled_cols = [col for col in df.columns if col.endswith('_scaled')]
+        if scaled_cols:
+            feat_cols = scaled_cols
+        else:
+            # Combine numerical features
+            feat_cols = num_features.copy()
+        
+        # Add encoded categorical features (for now just use as is, embeddings handled by model)
+        for col in cat_features_list:
+            if col in df.columns:
+                if col + '_encoded' not in df.columns:
+                    le = LabelEncoder()
+                    df[col + '_encoded'] = le.fit_transform(df[col].astype(str))
+                feat_cols.append(col + '_encoded')
+        
+        feat_data = df[feat_cols].fillna(0)
+        labels = df['Labels']
+        
+        # Add node features to graph
+        g.ndata['label'] = torch.from_numpy(labels.to_numpy()).to(torch.long)
+        g.ndata['feat'] = torch.from_numpy(feat_data.to_numpy()).to(torch.float32)
+        
+        # Save graph
+        graph_path = prefix + "graph-{}.bin".format(dataset)
+        dgl.data.utils.save_graphs(graph_path, [g])
+        
+        # Split data - using time-based split as suggested
+        # Sort by issue_date and take last 30% as test
+        df_sorted = df.sort_values('issue_date')
+        split_idx = int(len(df_sorted) * 0.7)
+        
+        train_idx = df_sorted.index[:split_idx].tolist()
+        test_idx = df_sorted.index[split_idx:].tolist()
+        
+        print(f"Train set: {len(train_idx)} transactions, Test set: {len(test_idx)} transactions")
+        print(f"Train fraud rate: {labels.iloc[train_idx].mean():.2%}")
+        print(f"Test fraud rate: {labels.iloc[test_idx].mean():.2%}")
+        
+        # Try to load neighborhood features if available
+        try:
+            feat_neigh = pd.read_csv(prefix + "creditcard_neigh_feat.csv")
+            print("neighborhood feature loaded for nn input.")
+            neigh_features = feat_neigh
+        except FileNotFoundError:
+            print("no neighborhood feature used - file not found.")
+            neigh_features = []
+        except Exception as e:
+            print(f"Error loading neighborhood features: {e}")
+            neigh_features = []
+        
+        # Return categorical features that actually exist in the data
+        cat_features = [col for col in cat_features_list if col in df.columns]
 
     return feat_data, labels, train_idx, test_idx, g, cat_features, neigh_features

@@ -11,6 +11,11 @@ data/*
 
 config/base_cfg.yaml
 
+
+*.zip
+models
+data
+
 logs
 
 nohup.out

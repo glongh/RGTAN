@@ -1,13 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from dgl.utils import expand_as_pair
-from dgl import function as fn
-from dgl.base import DGLError
-from dgl.nn.functional import edge_softmax
 import numpy as np
 import pandas as pd
 from math import sqrt
+from ..common.transformer_conv import TransformerConv
 
 
 class PosEncoding(nn.Module):
@@ -45,139 +42,7 @@ class PosEncoding(nn.Module):
             return torch.sin(x)
 
 
-class TransformerConv(nn.Module):
-
-    def __init__(self,
-                 in_feats,
-                 out_feats,
-                 num_heads,
-                 bias=True,
-                 allow_zero_in_degree=False,
-                 # feat_drop=0.6,
-                 # attn_drop=0.6,
-                 skip_feat=True,
-                 gated=True,
-                 layer_norm=True,
-                 activation=nn.PReLU()):
-        """
-        Initialize the transformer layer.
-        Attentional weights are jointly optimized in an end-to-end mechanism with graph neural networks and fraud detection networks.
-            :param in_feat: the shape of input feature
-            :param out_feats: the shape of output feature
-            :param num_heads: the number of multi-head attention 
-            :param bias: whether to use bias
-            :param allow_zero_in_degree: whether to allow zero in degree
-            :param skip_feat: whether to skip some feature 
-            :param gated: whether to use gate
-            :param layer_norm: whether to use layer regularization
-            :param activation: the type of activation function   
-        """
-
-        super(TransformerConv, self).__init__()
-        self._in_src_feats, self._in_dst_feats = expand_as_pair(in_feats)
-        self._out_feats = out_feats
-        self._allow_zero_in_degree = allow_zero_in_degree
-        self._num_heads = num_heads
-
-        self.lin_query = nn.Linear(
-            self._in_src_feats, self._out_feats*self._num_heads, bias=bias)
-        self.lin_key = nn.Linear(
-            self._in_src_feats, self._out_feats*self._num_heads, bias=bias)
-        self.lin_value = nn.Linear(
-            self._in_src_feats, self._out_feats*self._num_heads, bias=bias)
-
-        # self.feat_dropout = nn.Dropout(p=feat_drop)
-        # self.attn_dropout = nn.Dropout(p=attn_drop)
-        if skip_feat:
-            self.skip_feat = nn.Linear(
-                self._in_src_feats, self._out_feats*self._num_heads, bias=bias)
-        else:
-            self.skip_feat = None
-        if gated:
-            self.gate = nn.Linear(
-                3*self._out_feats*self._num_heads, 1, bias=bias)
-        else:
-            self.gate = None
-        if layer_norm:
-            self.layer_norm = nn.LayerNorm(self._out_feats*self._num_heads)
-        else:
-            self.layer_norm = None
-        self.activation = activation
-
-    def forward(self, graph, feat, get_attention=False):
-        """
-        Description: Transformer Graph Convolution
-        :param graph: input graph
-            :param feat: input feat
-            :param get_attention: whether to get attention
-        """
-
-        graph = graph.local_var()
-
-        if not self._allow_zero_in_degree:
-            if (graph.in_degrees() == 0).any():
-                raise DGLError('There are 0-in-degree nodes in the graph, '
-                               'output for those nodes will be invalid. '
-                               'This is harmful for some applications, '
-                               'causing silent performance regression. '
-                               'Adding self-loop on the input graph by '
-                               'calling `g = dgl.add_self_loop(g)` will resolve '
-                               'the issue. Setting ``allow_zero_in_degree`` '
-                               'to be `True` when constructing this module will '
-                               'suppress the check and let the code run.')
-
-        # check if feat is a tuple
-        if isinstance(feat, tuple):
-            h_src = feat[0]
-            h_dst = feat[1]
-        else:
-            h_src = feat
-            h_dst = h_src[:graph.number_of_dst_nodes()]
-
-        # Step 0. q, k, v
-        q_src = self.lin_query(
-            h_src).view(-1, self._num_heads, self._out_feats)
-        k_dst = self.lin_key(h_dst).view(-1, self._num_heads, self._out_feats)
-        v_src = self.lin_value(
-            h_src).view(-1, self._num_heads, self._out_feats)
-        # Assign features to nodes
-        graph.srcdata.update({'ft': q_src, 'ft_v': v_src})
-        graph.dstdata.update({'ft': k_dst})
-        # Step 1. dot product
-        graph.apply_edges(fn.u_dot_v('ft', 'ft', 'a'))
-
-        # Step 2. edge softmax to compute attention scores
-        graph.edata['sa'] = edge_softmax(
-            graph, graph.edata['a'] / self._out_feats**0.5)
-
-        # Step 3. Broadcast softmax value to each edge, and aggregate dst node
-        graph.update_all(fn.u_mul_e('ft_v', 'sa', 'attn'),
-                         fn.sum('attn', 'agg_u'))
-
-        # output results to the destination nodes
-        rst = graph.dstdata['agg_u'].reshape(-1,
-                                             self._out_feats*self._num_heads)
-
-        if self.skip_feat is not None:
-            skip_feat = self.skip_feat(feat[:graph.number_of_dst_nodes()])
-            if self.gate is not None:
-                gate = torch.sigmoid(
-                    self.gate(
-                        torch.concat([skip_feat, rst, skip_feat - rst], dim=-1)))
-                rst = gate * skip_feat + (1 - gate) * rst
-            else:
-                rst = skip_feat + rst
-
-        if self.layer_norm is not None:
-            rst = self.layer_norm(rst)
-
-        if self.activation is not None:
-            rst = self.activation(rst)
-
-        if get_attention:
-            return rst, graph.edata['sa']
-        else:
-            return rst
+# TransformerConv is now imported from common module
 
 
 class Tabular1DCNN2(nn.Module):
@@ -288,6 +153,12 @@ class Tabular1DCNN2(nn.Module):
 
 
 class TransEmbedding(nn.Module):
+    """
+    Transformer-based embedding module for categorical and neighborhood features.
+    
+    This module handles the embedding of categorical features and neighborhood
+    risk statistics using attention mechanisms and 1D CNN for feature extraction.
+    """
 
     def __init__(
         self,
@@ -301,15 +172,17 @@ class TransEmbedding(nn.Module):
         neighstat_uni_dim=64
     ):
         """
-        Initialize the attribute embedding and feature learning compoent
-
-        :param df: the feature (|train_idx|, |feat|)
-        :param device: where to train model
-        :param dropout: the dropout rate
-        :param in_feats_dim: the shape of input feature in dimension 1
-        :param cat_features: category features
-        :param neigh_features: neighbor riskstat features
-        :param att_head_num: attention head number for riskstat embeddings
+        Initialize the TransEmbedding module.
+        
+        Args:
+            df: Reference DataFrame for determining embedding sizes
+            device: Device to place embeddings on
+            dropout: Dropout rate for regularization
+            in_feats_dim: Dimension of input features
+            cat_features: List of categorical feature names
+            neigh_features: Dictionary of neighborhood statistics
+            att_head_num: Number of attention heads for neighborhood features
+            neighstat_uni_dim: Unified dimension for neighborhood statistics (unused)
         """
         super(TransEmbedding, self).__init__()
         self.time_pe = PosEncoding(dim=in_feats_dim, device=device, base=100)
@@ -417,6 +290,20 @@ class TransEmbedding(nn.Module):
 
 
 class RGTAN(nn.Module):
+    """
+    Robust Graph Temporal Attention Network for fraud detection.
+    
+    RGTAN extends GTAN by incorporating neighborhood risk statistics through
+    multi-head attention mechanisms. It uses TransformerConv layers for graph
+    convolution and includes sophisticated embedding strategies for both
+    categorical features and neighborhood statistics.
+    
+    Key innovations:
+    - Neighborhood risk statistic embeddings via 1D CNN
+    - Multi-head attention for risk feature aggregation
+    - Enhanced label propagation with risk-aware representations
+    """
+    
     def __init__(self,
                  in_feats,
                  hidden_dim,
@@ -436,24 +323,26 @@ class RGTAN(nn.Module):
                  nei_att_head=4,
                  device='cpu'):
         """
-        Initialize the RGTAN-GNN model
-        :param in_feats: the shape of input feature
-        :param hidden_dim: model hidden layer dimension
-        :param n_layers: the number of GTAN layers
-        :param n_classes: the number of classification
-        :param heads: the number of multi-head attention 
-        :param activation: the type of activation function
-        :param skip_feat: whether to skip some feature
-        :param gated: whether to use gate
-        :param layer_norm: whether to use layer regularization
-        :param post_proc: whether to use post processing
-        :param n2v_feat: whether to use n2v features
-        :param drop: whether to use drop
-        :param ref_df: whether to refer other node features
-        :param cat_features: category features
-        :param neigh_features: neighbor statistic features
-        :param nei_att_head: multihead attention for neighbor riskstat features
-        :param device: where to train model
+        Initialize the RGTAN model.
+        
+        Args:
+            in_feats: Input feature dimension
+            hidden_dim: Hidden layer dimension (will be divided by 4 internally)
+            n_layers: Number of graph convolution layers
+            n_classes: Number of output classes (typically 2 for fraud detection)
+            heads: List of attention heads per layer
+            activation: Activation function (typically nn.PReLU())
+            skip_feat: Whether to use skip connections in TransformerConv
+            gated: Whether to use gated residual connections
+            layer_norm: Whether to apply layer normalization
+            post_proc: Whether to use post-processing MLP
+            n2v_feat: Whether to use node2vec-like features
+            drop: Dropout rates [input_dropout, hidden_dropout]
+            ref_df: Reference DataFrame for categorical embeddings
+            cat_features: Dictionary of categorical features
+            neigh_features: Dictionary of neighborhood statistics
+            nei_att_head: Number of attention heads for neighborhood features
+            device: Device to run the model on
         """
 
         super(RGTAN, self).__init__()
@@ -521,11 +410,17 @@ class RGTAN(nn.Module):
 
     def forward(self, blocks, features, labels, n2v_feat=None, neighstat_feat=None):
         """
-        :param blocks: train blocks
-        :param features: train features
-        :param labels: train labels
-        :param n2v_feat: whether to use n2v features
-        :param neighstat_feat: neighbor riskstat features
+        Forward pass of RGTAN model.
+        
+        Args:
+            blocks: List of DGL blocks for mini-batch training
+            features: Node features tensor (batch_size, in_feats)
+            labels: Node labels for label propagation
+            n2v_feat: Categorical features dictionary
+            neighstat_feat: Neighborhood statistics dictionary
+            
+        Returns:
+            logits: Output predictions (batch_size, n_classes)
         """
         if n2v_feat is None and neighstat_feat is None:
             h = features

@@ -16,3 +16,11 @@ nei_att_heads:
     yelp: 4
     amazon: 5
     S-FFSD: 9
+# Learning rate scheduler configuration
+lr_scheduler:
+    milestones: [4000, 12000]
+    gamma: 0.3
+# Training configuration
+max_training_epochs: 2000
+# Graph convolution heads
+conv_heads: [4, 4]  # heads per layer
