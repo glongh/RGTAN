@@ -106,6 +106,9 @@ python test_creditcard.py
 
 # Alternative: Run without preprocessing (basic features only)
 python main.py --method rgtan --creditcard
+
+# To see available options
+python main.py --help
 ```
 
 ### Preprocessing Options

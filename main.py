@@ -20,7 +20,9 @@ def parse_args():
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter,
                             conflict_handler='resolve')
     parser.add_argument("--method", default=str)  # specify which method to use
-    method = vars(parser.parse_args())['method']  # dict
+    parser.add_argument("--creditcard", action='store_true', help="Use creditcard dataset configuration")
+    args = parser.parse_args()
+    method = args.method
 
     # if method in ['']:
     #     yaml_file = "config/base_cfg.yaml"
@@ -43,15 +45,17 @@ def parse_args():
         raise NotImplementedError("Unsupported method.")
     
     # Allow override with creditcard config if specified
-    if len(sys.argv) > 2 and sys.argv[2] == '--creditcard':
+    if args.creditcard:
         if method == 'rgtan':
             yaml_file = "config/creditcard_cfg.yaml"
+        else:
+            raise NotImplementedError(f"Credit card dataset not supported for method: {method}")
 
     # config = Config().get_config()
     with open(yaml_file) as file:
-        args = yaml.safe_load(file)
-    args['method'] = method
-    return args
+        config = yaml.safe_load(file)
+    config['method'] = method
+    return config
 
 
 def base_load_data(args: dict):
