@@ -159,3 +159,10 @@ dgl-cu113        0.8.1
         year={2016},
         organization={Springer}
     }
+
+    @misc{ai4risk_antifraud_2023,
+      author       = {{AI4Risk}},
+      title        = {Financial Fraud Detection Framework},
+      year         = {2023},
+      howpublished = {\url{https://github.com/AI4Risk/antifraud}},
+    }
