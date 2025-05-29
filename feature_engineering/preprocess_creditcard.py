@@ -249,27 +249,57 @@ def preprocess_creditcard_data(input_file='data/vod_creditcard.csv',
     df = pd.read_csv(input_file)
     print(f"Loaded {len(df)} transactions")
     
-    # 1. Convert labels
-    print("Converting labels...")
-    if 'IS_TARGETED' in df.columns:
-        # Check unique values
-        unique_values = df['IS_TARGETED'].unique()
-        print(f"Unique values in IS_TARGETED: {unique_values}")
+    # 1. Convert labels based on auth_msg
+    print("Converting labels based on auth_msg...")
+    if 'auth_msg' in df.columns:
+        # Check auth_msg distribution
+        auth_msg_counts = df['auth_msg'].value_counts()
+        print("\nTop 10 auth_msg values:")
+        print(auth_msg_counts.head(10))
         
-        # Map string values to binary
-        df['Labels'] = df['IS_TARGETED'].map({'yes': 1, 'no': 0, 'YES': 1, 'NO': 0})
+        # Define fraud patterns based on auth_msg
+        # These patterns indicate likely fraudulent or high-risk transactions
+        fraud_patterns = [
+            'DECLINE',
+            'INSUFF FUNDS',
+            'CALL',
+            'INVALID MERCHANT',
+            'BLOCKED',
+            'DECLINE SH',
+            'DECLINE SC',
+            'TERM ID ERROR',
+            'INVALID TRANS',
+            'ACCT LENGTH ERR',
+            'STOLEN CARD',
+            'LOST CARD',
+            'PICKUP CARD',
+            'FRAUD',
+            'SECURITY VIOLATION',
+            'RESTRICTED CARD',
+            'EXPIRED CARD'
+        ]
         
-        # Check for unmapped values
-        if df['Labels'].isna().any():
-            print(f"Warning: {df['Labels'].isna().sum()} unmapped label values found")
-            print(f"Unmapped values: {df[df['Labels'].isna()]['IS_TARGETED'].unique()}")
-            # Set unmapped to 0 (non-fraud)
-            df['Labels'] = df['Labels'].fillna(0).astype(int)
+        # Create labels: 1 for declined/suspicious, 0 for approved
+        df['Labels'] = 0  # Default to non-fraud
+        
+        # Mark transactions as fraud if auth_msg contains any fraud pattern
+        for pattern in fraud_patterns:
+            mask = df['auth_msg'].str.contains(pattern, case=False, na=False)
+            df.loc[mask, 'Labels'] = 1
+        
+        # Special handling for APPROVED - these are legitimate transactions
+        approved_mask = df['auth_msg'].str.contains('APPROVED', case=False, na=False)
+        df.loc[approved_mask, 'Labels'] = 0
+        
+        print(f"\nLabel distribution:")
+        print(f"  Non-fraud (approved): {(df['Labels'] == 0).sum()} ({(df['Labels'] == 0).mean():.2%})")
+        print(f"  Fraud/declined: {(df['Labels'] == 1).sum()} ({(df['Labels'] == 1).mean():.2%})")
+        
     else:
-        print("Error: IS_TARGETED column not found!")
-        raise ValueError("IS_TARGETED column is required for fraud labels")
+        print("Error: auth_msg column not found!")
+        raise ValueError("auth_msg column is required for fraud detection")
     
-    print(f"Fraud rate: {df['Labels'].mean():.2%}")
+    print(f"\nFraud rate: {df['Labels'].mean():.2%}")
     print(f"Fraud count: {df['Labels'].sum()} out of {len(df)} transactions")
     
     # 2. Hash sensitive data if privacy mode is on

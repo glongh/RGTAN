@@ -453,9 +453,40 @@ def load_rgtan_data(dataset: str, test_size: float):
             # Read the raw creditcard dataset
             df = pd.read_csv(prefix + 'vod_creditcard.csv')
         
-        # Convert IS_TARGETED to binary labels if not already done
+        # Convert labels if not already done
         if 'Labels' not in df.columns:
-            df['Labels'] = df['IS_TARGETED'].map({'yes': 1, 'no': 0})
+            if 'auth_msg' in df.columns:
+                # Create labels based on auth_msg
+                print("Creating labels from auth_msg field...")
+                
+                # Define fraud patterns
+                fraud_patterns = [
+                    'DECLINE', 'INSUFF FUNDS', 'CALL', 'INVALID MERCHANT',
+                    'BLOCKED', 'DECLINE SH', 'DECLINE SC', 'TERM ID ERROR',
+                    'INVALID TRANS', 'ACCT LENGTH ERR', 'STOLEN CARD',
+                    'LOST CARD', 'PICKUP CARD', 'FRAUD', 'SECURITY VIOLATION',
+                    'RESTRICTED CARD', 'EXPIRED CARD'
+                ]
+                
+                # Default to non-fraud
+                df['Labels'] = 0
+                
+                # Mark as fraud if auth_msg contains any fraud pattern
+                for pattern in fraud_patterns:
+                    mask = df['auth_msg'].str.contains(pattern, case=False, na=False)
+                    df.loc[mask, 'Labels'] = 1
+                
+                # Ensure approved transactions are marked as non-fraud
+                approved_mask = df['auth_msg'].str.contains('APPROVED', case=False, na=False)
+                df.loc[approved_mask, 'Labels'] = 0
+                
+                print(f"Label distribution - Fraud: {df['Labels'].mean():.2%}")
+            else:
+                print("Warning: No auth_msg column found, using IS_TARGETED if available")
+                if 'IS_TARGETED' in df.columns:
+                    df['Labels'] = df['IS_TARGETED'].map({'yes': 1, 'no': 0})
+                else:
+                    raise ValueError("Neither auth_msg nor IS_TARGETED columns found for labels")
         
         # Handle datetime columns
         date_columns = ['issue_date', 'capture_date', 'created_date', 'updated_date']

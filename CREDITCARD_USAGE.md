@@ -75,7 +75,7 @@ Optional preprocessed files (created by preprocessing script):
 ## Expected Columns in vod_creditcard.csv
 
 Key columns used:
-- `IS_TARGETED` - Fraud label (yes/no)
+- `auth_msg` - Authorization message (used to determine fraud/decline status)
 - `amount` - Transaction amount
 - `card_number` - Card identifier (will be hashed)
 - `member_id` - User account ID
@@ -83,6 +83,22 @@ Key columns used:
 - `customer_email` - Email (will be hashed)
 - `BIN` - Bank Identification Number
 - Date columns: `issue_date`, `capture_date`, etc.
+
+## Fraud Label Determination
+
+Transactions are labeled as fraud/declined (1) if `auth_msg` contains:
+- DECLINE (including DECLINE SH, DECLINE SC)
+- INSUFF FUNDS
+- CALL
+- INVALID MERCHANT
+- BLOCKED
+- TERM ID ERROR
+- INVALID TRANS
+- STOLEN/LOST CARD
+- FRAUD
+- Other security-related declines
+
+Transactions with "APPROVED" in auth_msg are labeled as legitimate (0).
 
 ## Output
 
