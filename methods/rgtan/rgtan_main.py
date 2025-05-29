@@ -427,7 +427,7 @@ def load_rgtan_data(dataset: str, test_size: float):
         import itertools
         from collections import defaultdict
         
-        cat_features_list = []
+        cat_features = []  # Will be populated with actual categorical column names
         neigh_features = []
         
         # Check if preprocessed data exists
@@ -447,6 +447,11 @@ def load_rgtan_data(dataset: str, test_size: float):
             if os.path.exists(neigh_file):
                 neigh_features = pd.read_csv(neigh_file)
                 print("Loaded neighborhood features.")
+                
+            # When using preprocessed data, categorical features are already encoded
+            # Find the original categorical column names (without _encoded suffix)
+            cat_features = [col.replace('_encoded', '') for col in df.columns if col.endswith('_encoded')]
+            print(f"Found {len(cat_features)} categorical features from preprocessing: {cat_features}")
         else:
             print("Preprocessed data not found. Loading raw data...")
             print("Consider running: python feature_engineering/preprocess_creditcard.py")
@@ -503,17 +508,21 @@ def load_rgtan_data(dataset: str, test_size: float):
         # Select numerical features
         num_features = ['amount', 'issue_date_seconds']
         
-        # Select categorical features for embeddings
-        cat_features_list = ['trans_status_msg_id', 'site_tag_id', 'origin_id', 
-                       'currency_id', 'card_type_id', 'processor_id', 
-                       'trans_status_code', 'BRAND', 'DEBITCREDIT', 'CARDTYPE']
+        # Select categorical features for embeddings - only use columns that exist
+        potential_cat_features = ['trans_status_msg_id', 'site_tag_id', 'origin_id', 
+                                 'currency_id', 'card_type_id', 'processor_id', 
+                                 'trans_status_code', 'BRAND', 'DEBITCREDIT', 'CARDTYPE']
+        
+        # Filter to only columns that exist in the dataframe
+        cat_features_list = [col for col in potential_cat_features if col in df.columns]
+        
+        print(f"Available categorical features: {cat_features_list}")
         
         # Handle missing values in categorical features
         for col in cat_features_list:
-            if col in df.columns:
-                df[col] = df[col].fillna(-1)
-                # Convert to string first to handle mixed types
-                df[col] = df[col].astype(str)
+            df[col] = df[col].fillna(-1)
+            # Convert to string first to handle mixed types
+            df[col] = df[col].astype(str)
         
         # Build graph - use preprocessed adjacency lists if available
         if 'adjacency_lists' in locals():
@@ -565,14 +574,24 @@ def load_rgtan_data(dataset: str, test_size: float):
         # Use scaled features if available (from preprocessing)
         scaled_cols = [col for col in df.columns if col.endswith('_scaled')]
         if scaled_cols:
+            print(f"Using {len(scaled_cols)} scaled features from preprocessing")
             feat_cols = scaled_cols
+            
+            # Also include encoded categorical features if they exist
+            encoded_cols = [col for col in df.columns if col.endswith('_encoded')]
+            if encoded_cols:
+                print(f"Using {len(encoded_cols)} encoded categorical features from preprocessing")
+                feat_cols.extend(encoded_cols)
         else:
+            # Build features from scratch
             # Combine numerical features
-            feat_cols = num_features.copy()
-        
-        # Add encoded categorical features (for now just use as is, embeddings handled by model)
-        for col in cat_features_list:
-            if col in df.columns:
+            feat_cols = []
+            for col in num_features:
+                if col in df.columns:
+                    feat_cols.append(col)
+            
+            # Add encoded categorical features
+            for col in cat_features_list:
                 if col + '_encoded' not in df.columns:
                     le = LabelEncoder()
                     df[col + '_encoded'] = le.fit_transform(df[col].astype(str))
@@ -613,7 +632,8 @@ def load_rgtan_data(dataset: str, test_size: float):
             print(f"Error loading neighborhood features: {e}")
             neigh_features = []
         
-        # Return categorical features that actually exist in the data
-        cat_features = [col for col in cat_features_list if col in df.columns]
+        # If cat_features not already set (from preprocessed data), determine from current data
+        if not cat_features:
+            cat_features = [col for col in cat_features_list if col in df.columns]
 
     return feat_data, labels, train_idx, test_idx, g, cat_features, neigh_features

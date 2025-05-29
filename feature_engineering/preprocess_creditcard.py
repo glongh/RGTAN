@@ -340,7 +340,21 @@ def preprocess_creditcard_data(input_file='data/vod_creditcard.csv',
         if col in df.columns:
             df[col + '_scaled'] = scaler.fit_transform(df[[col]].fillna(0))
     
-    # 8. Save preprocessed data
+    # 8. Encode categorical features
+    print("Encoding categorical features...")
+    categorical_cols = ['trans_status_msg_id', 'site_tag_id', 'origin_id', 
+                       'currency_id', 'card_type_id', 'processor_id', 
+                       'trans_status_code', 'BRAND', 'DEBITCREDIT', 'CARDTYPE']
+    
+    from sklearn.preprocessing import LabelEncoder
+    for col in categorical_cols:
+        if col in df.columns:
+            le = LabelEncoder()
+            # Handle missing values
+            df[col] = df[col].fillna('missing')
+            df[col + '_encoded'] = le.fit_transform(df[col].astype(str))
+    
+    # 9. Save preprocessed data
     print("Saving preprocessed data...")
     
     # Save main dataframe with features

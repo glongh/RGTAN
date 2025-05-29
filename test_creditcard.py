@@ -38,6 +38,10 @@ def test_creditcard_loading():
         print(f"Number of categorical features: {len(cat_features)}")
         print(f"Categorical features: {cat_features}")
         
+        print(f"\n=== Feature Columns ===")
+        print(f"Feature data columns: {list(feat_data.columns)[:20]}...")  # Show first 20
+        print(f"Total feature columns: {feat_data.shape[1]}")
+        
         print(f"\n=== Feature Values Sample ===")
         print(feat_data.head())
         
