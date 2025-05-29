@@ -56,8 +56,26 @@ def rgtan_main(feat_df, graph, train_idx, test_idx, labels, args, cat_features, 
 
     y_target = labels.iloc[train_idx].values
     num_feat = torch.from_numpy(feat_df.values).float().to(device)
-    cat_feat = {col: torch.from_numpy(feat_df[col].values).long().to(
-        device) for col in cat_features}
+    
+    # Handle categorical features - for creditcard dataset they might not be needed
+    # since embeddings are already in the model
+    if cat_features and len(cat_features) > 0:
+        cat_feat = {}
+        for col in cat_features:
+            if col in feat_df.columns:
+                # Original categorical column exists
+                cat_feat[col] = torch.from_numpy(feat_df[col].values).long().to(device)
+            elif col + '_encoded' in feat_df.columns:
+                # Use the encoded version
+                cat_feat[col] = torch.from_numpy(feat_df[col + '_encoded'].values).long().to(device)
+            else:
+                # For creditcard dataset, categorical features might be preprocessed
+                # Create dummy indices for now
+                print(f"Info: Categorical feature {col} not in feat_df, using indices")
+                cat_feat[col] = torch.arange(len(feat_df)).long().to(device)
+    else:
+        # No categorical features
+        cat_feat = {}
 
     neigh_padding_dict = {}
     nei_feat = []
@@ -449,9 +467,11 @@ def load_rgtan_data(dataset: str, test_size: float):
                 print("Loaded neighborhood features.")
                 
             # When using preprocessed data, categorical features are already encoded
-            # Find the original categorical column names (without _encoded suffix)
-            cat_features = [col.replace('_encoded', '') for col in df.columns if col.endswith('_encoded')]
-            print(f"Found {len(cat_features)} categorical features from preprocessing: {cat_features}")
+            # For RGTAN with preprocessed data, we don't need separate categorical features
+            # since they're already included in the feature matrix as encoded values
+            cat_features = []
+            encoded_features = [col for col in df.columns if col.endswith('_encoded')]
+            print(f"Found {len(encoded_features)} encoded categorical features from preprocessing")
         else:
             print("Preprocessed data not found. Loading raw data...")
             print("Consider running: python feature_engineering/preprocess_creditcard.py")
@@ -597,12 +617,24 @@ def load_rgtan_data(dataset: str, test_size: float):
                     df[col + '_encoded'] = le.fit_transform(df[col].astype(str))
                 feat_cols.append(col + '_encoded')
         
-        feat_data = df[feat_cols].fillna(0)
+        # Create feat_data with all necessary columns for RGTAN
+        # Include both the feature columns AND the original categorical columns
+        all_cols = feat_cols + [col for col in cat_features if col in df.columns and col not in feat_cols]
+        feat_data = df[all_cols].copy()
+        
+        # Ensure categorical columns are properly typed
+        for col in cat_features:
+            if col in feat_data.columns:
+                # Convert to numeric, filling non-numeric values with -1
+                feat_data[col] = pd.to_numeric(feat_data[col], errors='coerce').fillna(-1).astype(int)
+        
+        # Fill any remaining NaN values
+        feat_data = feat_data.fillna(0)
         labels = df['Labels']
         
-        # Add node features to graph
+        # Add node features to graph (only the numerical features)
         g.ndata['label'] = torch.from_numpy(labels.to_numpy()).to(torch.long)
-        g.ndata['feat'] = torch.from_numpy(feat_data.to_numpy()).to(torch.float32)
+        g.ndata['feat'] = torch.from_numpy(df[feat_cols].to_numpy()).to(torch.float32)
         
         # Save graph
         graph_path = prefix + "graph-{}.bin".format(dataset)
@@ -632,8 +664,8 @@ def load_rgtan_data(dataset: str, test_size: float):
             print(f"Error loading neighborhood features: {e}")
             neigh_features = []
         
-        # If cat_features not already set (from preprocessed data), determine from current data
-        if not cat_features:
+        # For creditcard with raw data, set categorical features
+        if 'cat_features' not in locals():
             cat_features = [col for col in cat_features_list if col in df.columns]
 
     return feat_data, labels, train_idx, test_idx, g, cat_features, neigh_features
