@@ -113,7 +113,18 @@ python feature_engineering/preprocess_creditcard.py \
     --input path/to/your/data.csv \
     --output path/to/output/ \
     --min-edge-freq 5 \
+    --max-edges-per-entity 50 \
     --no-privacy  # Don't hash sensitive data
+```
+
+### Memory Optimization
+If preprocessing gets killed due to memory issues:
+```bash
+# Reduce max edges per entity (default is 100)
+python feature_engineering/preprocess_creditcard.py --max-edges-per-entity 50
+
+# Or increase minimum edge frequency to reduce graph size
+python feature_engineering/preprocess_creditcard.py --min-edge-freq 10
 ```
 
 ### Modify configuration

@@ -107,12 +107,13 @@ def create_aggregated_features(df):
     return agg_features
 
 
-def create_graph_adjacency_lists(df, min_edge_freq=2):
-    """Create adjacency lists for graph construction"""
+def create_graph_adjacency_lists(df, min_edge_freq=2, max_edges_per_entity=100):
+    """Create adjacency lists for graph construction with memory optimization"""
     print("Creating graph adjacency lists...")
     
     adjacency_lists = defaultdict(set)
     edge_counts = defaultdict(int)
+    entity_counts = defaultdict(int)
     
     key_columns = ['card_number', 'member_id', 'customer_ip', 'customer_email', 'BIN']
     
@@ -128,18 +129,56 @@ def create_graph_adjacency_lists(df, min_edge_freq=2):
             if pd.notna(val) and val != '':
                 groups[val].append(idx)
         
+        # Sort groups by size to identify potential issues
+        large_groups = [(val, len(indices)) for val, indices in groups.items() if len(indices) > 50]
+        if large_groups:
+            print(f"    Warning: Found {len(large_groups)} entities with >50 transactions")
+            largest = max(large_groups, key=lambda x: x[1])
+            print(f"    Largest group has {largest[1]} transactions")
+        
         # Create edges between transactions with same key
         for val, indices in groups.items():
             if len(indices) >= min_edge_freq:  # Only create edges if frequency meets threshold
-                for i in indices:
-                    for j in indices:
+                entity_counts[col] += 1
+                
+                # For very large groups, sample edges to avoid memory explosion
+                if len(indices) > max_edges_per_entity:
+                    print(f"    Limiting edges for {col} value with {len(indices)} transactions")
+                    # Sample a subset of indices
+                    sampled_indices = np.random.choice(indices, max_edges_per_entity, replace=False)
+                    indices = sampled_indices.tolist()
+                
+                # Create edges more efficiently
+                # Instead of all permutations, create a connected component
+                if len(indices) <= 10:
+                    # For small groups, create all edges
+                    for i in range(len(indices)):
+                        for j in range(i + 1, len(indices)):
+                            adjacency_lists[indices[i]].add(indices[j])
+                            adjacency_lists[indices[j]].add(indices[i])
+                            edge_counts[col] += 2
+                else:
+                    # For larger groups, create a hub-and-spoke pattern to reduce edges
+                    # This maintains connectivity while reducing memory usage
+                    hub = indices[0]
+                    for i in range(1, len(indices)):
+                        adjacency_lists[hub].add(indices[i])
+                        adjacency_lists[indices[i]].add(hub)
+                        edge_counts[col] += 2
+                    
+                    # Add some additional random edges for better connectivity
+                    num_extra_edges = min(len(indices) - 1, 20)
+                    for _ in range(num_extra_edges):
+                        i, j = np.random.choice(len(indices), 2, replace=False)
                         if i != j:
-                            adjacency_lists[i].add(j)
-                            edge_counts[col] += 1
+                            adjacency_lists[indices[i]].add(indices[j])
+                            adjacency_lists[indices[j]].add(indices[i])
+                            edge_counts[col] += 2
     
     print(f"  Total edges created: {sum(len(adj) for adj in adjacency_lists.values())}")
+    print("  Edge statistics by column:")
     for col, count in edge_counts.items():
-        print(f"    {col}: {count} edges")
+        print(f"    {col}: {count} edges from {entity_counts[col]} unique entities")
     
     return dict(adjacency_lists)
 
@@ -193,6 +232,7 @@ def create_neighborhood_features(df, adjacency_lists):
 def preprocess_creditcard_data(input_file='data/vod_creditcard.csv', 
                               output_dir='data/',
                               min_edge_freq=2,
+                              max_edges_per_entity=100,
                               privacy_mode=True):
     """
     Main preprocessing function for credit card dataset.
@@ -201,6 +241,7 @@ def preprocess_creditcard_data(input_file='data/vod_creditcard.csv',
         input_file: Path to input CSV file
         output_dir: Directory to save preprocessed files
         min_edge_freq: Minimum frequency for edge creation
+        max_edges_per_entity: Maximum edges per entity to prevent memory issues
         privacy_mode: Whether to hash sensitive information
     """
     
@@ -210,8 +251,26 @@ def preprocess_creditcard_data(input_file='data/vod_creditcard.csv',
     
     # 1. Convert labels
     print("Converting labels...")
-    df['Labels'] = df['IS_TARGETED'].map({'yes': 1, 'no': 0})
+    if 'IS_TARGETED' in df.columns:
+        # Check unique values
+        unique_values = df['IS_TARGETED'].unique()
+        print(f"Unique values in IS_TARGETED: {unique_values}")
+        
+        # Map string values to binary
+        df['Labels'] = df['IS_TARGETED'].map({'yes': 1, 'no': 0, 'YES': 1, 'NO': 0})
+        
+        # Check for unmapped values
+        if df['Labels'].isna().any():
+            print(f"Warning: {df['Labels'].isna().sum()} unmapped label values found")
+            print(f"Unmapped values: {df[df['Labels'].isna()]['IS_TARGETED'].unique()}")
+            # Set unmapped to 0 (non-fraud)
+            df['Labels'] = df['Labels'].fillna(0).astype(int)
+    else:
+        print("Error: IS_TARGETED column not found!")
+        raise ValueError("IS_TARGETED column is required for fraud labels")
+    
     print(f"Fraud rate: {df['Labels'].mean():.2%}")
+    print(f"Fraud count: {df['Labels'].sum()} out of {len(df)} transactions")
     
     # 2. Hash sensitive data if privacy mode is on
     if privacy_mode:
@@ -231,7 +290,7 @@ def preprocess_creditcard_data(input_file='data/vod_creditcard.csv',
     agg_features = create_aggregated_features(df)
     
     # 5. Create adjacency lists
-    adjacency_lists = create_graph_adjacency_lists(df, min_edge_freq)
+    adjacency_lists = create_graph_adjacency_lists(df, min_edge_freq, max_edges_per_entity)
     
     # 6. Create neighborhood features
     neigh_features = create_neighborhood_features(df, adjacency_lists)
@@ -299,6 +358,8 @@ if __name__ == "__main__":
     parser.add_argument('--input', default='data/vod_creditcard.csv', help='Input CSV file')
     parser.add_argument('--output', default='data/', help='Output directory')
     parser.add_argument('--min-edge-freq', type=int, default=2, help='Minimum edge frequency')
+    parser.add_argument('--max-edges-per-entity', type=int, default=100, 
+                       help='Maximum edges per entity to prevent memory issues')
     parser.add_argument('--no-privacy', action='store_true', help='Disable privacy mode (no hashing)')
     
     args = parser.parse_args()
@@ -307,5 +368,6 @@ if __name__ == "__main__":
         input_file=args.input,
         output_dir=args.output,
         min_edge_freq=args.min_edge_freq,
+        max_edges_per_entity=args.max_edges_per_entity,
         privacy_mode=not args.no_privacy
     )
