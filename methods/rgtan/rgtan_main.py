@@ -341,6 +341,10 @@ def load_rgtan_data(dataset: str, test_size: float):
         alls = np.array(alls)
         allt = np.array(allt)
         g = dgl.graph((alls, allt))
+        
+        # Add self-loops to handle isolated nodes
+        g = dgl.add_self_loop(g)
+        
         cal_list = ["Source", "Target", "Location", "Type"]
         for col in cal_list:
             le = LabelEncoder()
@@ -388,6 +392,8 @@ def load_rgtan_data(dataset: str, test_size: float):
         src = np.array(src)
         tgt = np.array(tgt)
         g = dgl.graph((src, tgt))
+        # Add self-loops to handle isolated nodes
+        g = dgl.add_self_loop(g)
         g.ndata['label'] = torch.from_numpy(labels.to_numpy()).to(torch.long)
         g.ndata['feat'] = torch.from_numpy(
             feat_data.to_numpy()).to(torch.float32)
@@ -426,6 +432,8 @@ def load_rgtan_data(dataset: str, test_size: float):
         src = np.array(src)
         tgt = np.array(tgt)
         g = dgl.graph((src, tgt))
+        # Add self-loops to handle isolated nodes
+        g = dgl.add_self_loop(g)
         g.ndata['label'] = torch.from_numpy(labels.to_numpy()).to(torch.long)
         g.ndata['feat'] = torch.from_numpy(
             feat_data.to_numpy()).to(torch.float32)
@@ -557,6 +565,8 @@ def load_rgtan_data(dataset: str, test_size: float):
                     edge_dst.append(dst)
             if edge_src:
                 g.add_edges(edge_src, edge_dst)
+            # Add self-loops to handle isolated nodes
+            g = dgl.add_self_loop(g)
         else:
             # Build graph from scratch
             g = dgl.graph([])
@@ -587,6 +597,9 @@ def load_rgtan_data(dataset: str, test_size: float):
             # Add edges to graph
             if edge_src:
                 g.add_edges(edge_src, edge_dst)
+            
+            # Add self-loops to handle isolated nodes
+            g = dgl.add_self_loop(g)
         
         print(f"Created graph with {g.number_of_nodes()} nodes and {g.number_of_edges()} edges")
         
@@ -635,6 +648,9 @@ def load_rgtan_data(dataset: str, test_size: float):
         # Add node features to graph (only the numerical features)
         g.ndata['label'] = torch.from_numpy(labels.to_numpy()).to(torch.long)
         g.ndata['feat'] = torch.from_numpy(df[feat_cols].to_numpy()).to(torch.float32)
+        
+        # Add self-loops to handle isolated nodes
+        g = dgl.add_self_loop(g)
         
         # Save graph
         graph_path = prefix + "graph-{}.bin".format(dataset)
