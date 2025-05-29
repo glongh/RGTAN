@@ -1,5 +1,7 @@
 batch_size: 64
 hid_dim: 256
+# Note: in_feats for RGTAN will be number of features (41 in this case)
+# nei_att_heads should divide evenly into in_feats
 lr: 0.003
 wd: !!float 1e-4
 n_layers: 2
@@ -13,7 +15,7 @@ gated: True
 dataset: creditcard
 test_size: 0.3  # Time-based split - last 30% for testing
 nei_att_heads:
-    creditcard: 8
+    creditcard: 8  # Fixed to work with any feature dimension
 # Learning rate scheduler configuration
 lr_scheduler:
     milestones: [4000, 12000]

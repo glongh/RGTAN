@@ -195,13 +195,14 @@ class TransEmbedding(nn.Module):
                 neigh_features), embed_dim=in_feats_dim)
 
         self.att_head_num = att_head_num
-        self.att_head_size = int(in_feats_dim / att_head_num)
-        self.total_head_size = in_feats_dim
+        # Ensure head size calculation works with any feature dimension
+        self.att_head_size = in_feats_dim // att_head_num
+        self.total_head_size = self.att_head_size * att_head_num  # May be slightly less than in_feats_dim
         self.lin_q = nn.Linear(in_feats_dim, self.total_head_size)
         self.lin_k = nn.Linear(in_feats_dim, self.total_head_size)
         self.lin_v = nn.Linear(in_feats_dim, self.total_head_size)
 
-        self.lin_final = nn.Linear(in_feats_dim, in_feats_dim)
+        self.lin_final = nn.Linear(self.total_head_size, in_feats_dim)
         self.layer_norm = nn.LayerNorm(in_feats_dim, eps=1e-8)
 
         self.neigh_mlp = nn.Linear(in_feats_dim, 1)
