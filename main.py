@@ -21,6 +21,7 @@ def parse_args():
                             conflict_handler='resolve')
     parser.add_argument("--method", default=str)  # specify which method to use
     parser.add_argument("--creditcard", action='store_true', help="Use creditcard dataset configuration")
+    parser.add_argument("--realistic", action='store_true', help="Use realistic fraud labels (no leakage)")
     args = parser.parse_args()
     method = args.method
 
@@ -47,7 +48,10 @@ def parse_args():
     # Allow override with creditcard config if specified
     if args.creditcard:
         if method == 'rgtan':
-            yaml_file = "config/creditcard_cfg.yaml"
+            if args.realistic:
+                yaml_file = "config/creditcard_realistic_cfg.yaml"
+            else:
+                yaml_file = "config/creditcard_cfg.yaml"
         else:
             raise NotImplementedError(f"Credit card dataset not supported for method: {method}")
 

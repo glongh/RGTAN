@@ -1,0 +1,29 @@
+batch_size: 64
+hid_dim: 256
+# Note: in_feats for RGTAN will be number of features
+# nei_att_heads should divide evenly into in_feats
+lr: 0.003
+wd: !!float 1e-4
+n_layers: 2
+dropout: [0.2, 0.1]
+device: "cuda:0"
+early_stopping: 20  # More patience for harder task
+n_fold: 5
+seed: 2023
+max_epochs: 30  # More epochs for harder task
+gated: True
+dataset: creditcard
+test_size: 0.3  # Time-based split
+nei_att_heads:
+    creditcard: 8
+# Learning rate scheduler configuration
+lr_scheduler:
+    milestones: [10000, 20000]  # Adjust for harder task
+    gamma: 0.3
+# Training configuration
+max_training_epochs: 2000
+# Graph convolution heads
+conv_heads: [4, 4]  # heads per layer
+# Class imbalance handling
+use_class_weight: True
+pos_weight: 50.0  # Higher weight for rare fraud class (~1-2%)

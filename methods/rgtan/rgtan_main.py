@@ -456,10 +456,18 @@ def load_rgtan_data(dataset: str, test_size: float):
         cat_features = []  # Will be populated with actual categorical column names
         neigh_features = []
         
-        # Check if preprocessed data exists
-        preprocessed_file = prefix + 'creditcard_preprocessed.csv'
-        adj_file = prefix + 'creditcard_homo_adjlists.pickle'
-        neigh_file = prefix + 'creditcard_neigh_feat.csv'
+        # Check if preprocessed data exists (try realistic version first)
+        preprocessed_file = prefix + 'creditcard_realistic_preprocessed.csv'
+        adj_file = prefix + 'creditcard_realistic_adjlists.pickle'
+        neigh_file = prefix + 'creditcard_realistic_neigh_feat.csv'
+        split_file = prefix + 'creditcard_realistic_splits.pickle'
+        
+        # Fall back to original preprocessing if realistic doesn't exist
+        if not os.path.exists(preprocessed_file):
+            preprocessed_file = prefix + 'creditcard_preprocessed.csv'
+            adj_file = prefix + 'creditcard_homo_adjlists.pickle'
+            neigh_file = prefix + 'creditcard_neigh_feat.csv'
+            split_file = None
         
         if os.path.exists(preprocessed_file) and os.path.exists(adj_file):
             print("Loading preprocessed creditcard data...")
@@ -656,13 +664,22 @@ def load_rgtan_data(dataset: str, test_size: float):
         graph_path = prefix + "graph-{}.bin".format(dataset)
         dgl.data.utils.save_graphs(graph_path, [g])
         
-        # Split data - using time-based split as suggested
-        # Sort by issue_date and take last 30% as test
-        df_sorted = df.sort_values('issue_date')
-        split_idx = int(len(df_sorted) * 0.7)
-        
-        train_idx = df_sorted.index[:split_idx].tolist()
-        test_idx = df_sorted.index[split_idx:].tolist()
+        # Split data - use saved splits if available (for realistic preprocessing)
+        if split_file and os.path.exists(split_file):
+            print("Using saved train/test splits...")
+            with open(split_file, 'rb') as f:
+                splits = pickle.load(f)
+                train_mask = splits['train_mask']
+                train_idx = df[train_mask].index.tolist()
+                test_idx = df[~train_mask].index.tolist()
+        else:
+            # Fall back to time-based split
+            print("Creating time-based split...")
+            df_sorted = df.sort_values('issue_date')
+            split_idx = int(len(df_sorted) * 0.7)
+            
+            train_idx = df_sorted.index[:split_idx].tolist()
+            test_idx = df_sorted.index[split_idx:].tolist()
         
         print(f"Train set: {len(train_idx)} transactions, Test set: {len(test_idx)} transactions")
         print(f"Train fraud rate: {labels.iloc[train_idx].mean():.2%}")
