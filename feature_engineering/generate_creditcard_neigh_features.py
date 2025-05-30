@@ -51,7 +51,7 @@ def compute_neighbor_features_from_sparse(homo_adj, labels):
             hop1_riskstat[i] = riskstat[i]
     
     # Skip 2-hop computation for very large graphs (optional)
-    compute_2hop = n_nodes < 10000
+    compute_2hop = n_nodes < 100000
     
     if compute_2hop:
         print("Computing 2-hop features...")
