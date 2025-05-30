@@ -19,6 +19,11 @@ DATADIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data/"
 
 def compute_neighbor_features_from_sparse(homo_adj, labels):
     """Compute neighbor features directly from sparse adjacency matrix"""
+    # Convert to CSR format for efficient row access
+    if not isinstance(homo_adj, sp.csr_matrix):
+        print("Converting adjacency matrix to CSR format...")
+        homo_adj = homo_adj.tocsr()
+    
     n_nodes = homo_adj.shape[0]
     
     # Initialize feature arrays
@@ -45,28 +50,34 @@ def compute_neighbor_features_from_sparse(homo_adj, labels):
             hop1_degree[i] = len(neighbors)
             hop1_riskstat[i] = riskstat[i]
     
-    print("Computing 2-hop features...")
-    # For 2-hop neighbors (more expensive computation)
-    # We'll sample for efficiency on large graphs
-    sample_size = min(5000, n_nodes)  # Sample subset for 2-hop
-    sample_indices = np.random.choice(n_nodes, sample_size, replace=False)
+    # Skip 2-hop computation for very large graphs (optional)
+    compute_2hop = n_nodes < 10000
     
-    for idx in tqdm(sample_indices, desc="Computing 2-hop features (sampled)"):
-        # Get 1-hop neighbors
-        neighbors_1hop = set(homo_adj[idx].nonzero()[1])
+    if compute_2hop:
+        print("Computing 2-hop features...")
+        # For 2-hop neighbors (more expensive computation)
+        # We'll sample for efficiency on large graphs
+        sample_size = min(5000, n_nodes)  # Sample subset for 2-hop
+        sample_indices = np.random.choice(n_nodes, sample_size, replace=False)
         
-        # Get 2-hop neighbors
-        neighbors_2hop = set()
-        for n1 in neighbors_1hop:
-            n2_candidates = homo_adj[n1].nonzero()[1]
-            for n2 in n2_candidates:
-                if n2 != idx and n2 not in neighbors_1hop:
-                    neighbors_2hop.add(n2)
-        
-        if len(neighbors_2hop) > 0:
-            neighbors_2hop = list(neighbors_2hop)
-            hop2_degree[idx] = len(neighbors_2hop)
-            hop2_riskstat[idx] = labels[neighbors_2hop].sum()
+        for idx in tqdm(sample_indices, desc="Computing 2-hop features (sampled)"):
+            # Get 1-hop neighbors
+            neighbors_1hop = set(homo_adj[idx].nonzero()[1])
+            
+            # Get 2-hop neighbors
+            neighbors_2hop = set()
+            for n1 in neighbors_1hop:
+                n2_candidates = homo_adj[n1].nonzero()[1]
+                for n2 in n2_candidates:
+                    if n2 != idx and n2 not in neighbors_1hop:
+                        neighbors_2hop.add(n2)
+            
+            if len(neighbors_2hop) > 0:
+                neighbors_2hop = list(neighbors_2hop)
+                hop2_degree[idx] = len(neighbors_2hop)
+                hop2_riskstat[idx] = labels[neighbors_2hop].sum()
+    else:
+        print("Skipping 2-hop features for large graph (>10k nodes)")
     
     # Create DataFrame
     features = pd.DataFrame({
