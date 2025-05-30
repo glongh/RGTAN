@@ -105,7 +105,7 @@ def simulate_fraud_labels(df):
     print(f"Fraud distribution:")
     print(f"  Total transactions: {len(df)}")
     print(f"  Fraudulent: {df['is_fraud'].sum()} ({df['is_fraud'].mean()*100:.2f}%)")
-    print(f"  Legitimate: {(~df['is_fraud']).sum()} ({(~df['is_fraud']).mean()*100:.2f}%)")
+    print(f"  Legitimate: {(df['is_fraud'] == 0).sum()} ({(df['is_fraud'] == 0).mean()*100:.2f}%)")
     
     return df
 
@@ -142,13 +142,14 @@ def extract_time_features(df, cutoff_date=None):
 
 
 def create_aggregated_features_no_leakage(df, train_mask):
-    """Create aggregated features using only training data to avoid leakage"""
+    """Create aggregated features using only training data to avoid leakage - Optimized version"""
     print("Creating aggregated features (no leakage)...")
     
     agg_features = pd.DataFrame(index=df.index)
     
     # Sort by time for proper historical aggregation
-    df = df.sort_values('issue_date')
+    df = df.sort_values('issue_date').copy()
+    df['_idx'] = np.arange(len(df))  # Track original index after sorting
     
     # Key columns for aggregation
     key_columns = ['card_number', 'member_id', 'customer_ip', 'customer_email', 'BIN']
@@ -159,37 +160,46 @@ def create_aggregated_features_no_leakage(df, train_mask):
             
         print(f"  Processing {key_col}...")
         
-        # For each transaction, only use PAST training data
-        for idx in tqdm(df.index, desc=f"Computing {key_col} features"):
-            # Get transaction date
-            trans_date = df.loc[idx, 'issue_date']
+        # Initialize feature columns
+        for suffix in ['_prev_count', '_prev_fraud_rate', '_prev_avg_amount', '_prev_std_amount', '_days_since_last']:
+            agg_features[f'{key_col}{suffix}'] = 0.0
+        
+        # Group by key column for efficiency
+        grouped = df.groupby(key_col)
+        
+        # Process each group
+        for key_value, group in tqdm(grouped, desc=f"Computing {key_col} features"):
+            if len(group) < 2:
+                continue  # Skip single transaction entities
             
-            # Find all past transactions with same key that are in training set
-            same_key_mask = (df[key_col] == df.loc[idx, key_col])
-            past_mask = (df['issue_date'] < trans_date)
-            train_data_mask = train_mask  # Only use training data
+            # Sort group by date
+            group = group.sort_values('issue_date')
+            group_indices = group.index.tolist()
             
-            valid_mask = same_key_mask & past_mask & train_data_mask
-            past_transactions = df[valid_mask]
-            
-            # Compute features from past transactions only
-            if len(past_transactions) > 0:
-                agg_features.loc[idx, f'{key_col}_prev_count'] = len(past_transactions)
-                agg_features.loc[idx, f'{key_col}_prev_fraud_rate'] = past_transactions['is_fraud'].mean()
-                agg_features.loc[idx, f'{key_col}_prev_avg_amount'] = past_transactions['amount'].mean()
-                agg_features.loc[idx, f'{key_col}_prev_std_amount'] = past_transactions['amount'].std()
+            # For each transaction in the group
+            for i, idx in enumerate(group_indices):
+                # Only compute for transactions after the first one
+                if i == 0:
+                    continue
                 
-                # Days since last transaction
-                last_trans_date = past_transactions['issue_date'].max()
-                days_since = (trans_date - last_trans_date).total_seconds() / 86400
-                agg_features.loc[idx, f'{key_col}_days_since_last'] = days_since
-            else:
-                # First transaction for this entity
-                agg_features.loc[idx, f'{key_col}_prev_count'] = 0
-                agg_features.loc[idx, f'{key_col}_prev_fraud_rate'] = 0
-                agg_features.loc[idx, f'{key_col}_prev_avg_amount'] = 0
-                agg_features.loc[idx, f'{key_col}_prev_std_amount'] = 0
-                agg_features.loc[idx, f'{key_col}_days_since_last'] = -1
+                # Get past transactions in this group that are in training set
+                past_indices = group_indices[:i]
+                past_group = group.loc[past_indices]
+                
+                # Filter to only training data
+                train_past = past_group[train_mask.reindex(past_group.index, fill_value=False)]
+                
+                if len(train_past) > 0:
+                    agg_features.loc[idx, f'{key_col}_prev_count'] = len(train_past)
+                    agg_features.loc[idx, f'{key_col}_prev_fraud_rate'] = train_past['is_fraud'].mean()
+                    agg_features.loc[idx, f'{key_col}_prev_avg_amount'] = train_past['amount'].mean()
+                    agg_features.loc[idx, f'{key_col}_prev_std_amount'] = train_past['amount'].std() if len(train_past) > 1 else 0
+                    
+                    # Days since last transaction
+                    trans_date = group.loc[idx, 'issue_date']
+                    last_trans_date = train_past['issue_date'].max()
+                    days_since = (trans_date - last_trans_date).total_seconds() / 86400
+                    agg_features.loc[idx, f'{key_col}_days_since_last'] = days_since
     
     return agg_features.fillna(0)
 

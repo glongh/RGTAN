@@ -14,6 +14,7 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import average_precision_score, roc_auc_score, f1_score
 from scipy.io import loadmat
+import scipy.sparse as sp
 from tqdm import tqdm
 from . import *
 from .rgtan_lpa import load_lpa_subtensor
@@ -453,252 +454,304 @@ def load_rgtan_data(dataset: str, test_size: float):
         import itertools
         from collections import defaultdict
         
-        cat_features = []  # Will be populated with actual categorical column names
+        cat_features = []
         neigh_features = []
         
-        # Check if preprocessed data exists (try realistic version first)
-        preprocessed_file = prefix + 'creditcard_realistic_preprocessed.csv'
-        adj_file = prefix + 'creditcard_realistic_adjlists.pickle'
-        neigh_file = prefix + 'creditcard_realistic_neigh_feat.csv'
-        split_file = prefix + 'creditcard_realistic_splits.pickle'
-        
-        # Fall back to original preprocessing if realistic doesn't exist
-        if not os.path.exists(preprocessed_file):
-            preprocessed_file = prefix + 'creditcard_preprocessed.csv'
+        # First check if MAT format exists (preferred format)
+        mat_file = prefix + 'CreditCard.mat'
+        if os.path.exists(mat_file):
+            print(f"Loading CreditCard dataset from {mat_file}...")
+            data_file = loadmat(mat_file)
+            labels = pd.DataFrame(data_file['label'].flatten())[0]
+            feat_data = pd.DataFrame(data_file['features'].todense().A)
+            
+            # Build adjacency list from homo matrix
+            homo_adj = data_file['homo']
+            homo = defaultdict(list)
+            rows, cols = sp.find(homo_adj)[:2]
+            for i, j in zip(rows, cols):
+                if i != j:  # Skip self-loops for adjacency list
+                    homo[i].append(j)
+            
+            # Save adjacency list for future use
             adj_file = prefix + 'creditcard_homo_adjlists.pickle'
-            neigh_file = prefix + 'creditcard_neigh_feat.csv'
-            split_file = None
-        
-        if os.path.exists(preprocessed_file) and os.path.exists(adj_file):
-            print("Loading preprocessed creditcard data...")
-            df = pd.read_csv(preprocessed_file)
+            with open(adj_file, 'wb') as f:
+                pickle.dump(dict(homo), f)
             
-            # Load adjacency lists
-            with open(adj_file, 'rb') as f:
-                adjacency_lists = pickle.load(f)
+            index = list(range(len(labels)))
+            train_idx, test_idx, y_train, y_test = train_test_split(
+                index, labels, stratify=labels, test_size=test_size, 
+                random_state=2, shuffle=True
+            )
             
-            # Try to load neighborhood features
-            if os.path.exists(neigh_file):
-                neigh_features = pd.read_csv(neigh_file)
-                print("Loaded neighborhood features.")
-                
-            # When using preprocessed data, categorical features are already encoded
-            # For RGTAN with preprocessed data, we don't need separate categorical features
-            # since they're already included in the feature matrix as encoded values
-            cat_features = []
-            encoded_features = [col for col in df.columns if col.endswith('_encoded')]
-            print(f"Found {len(encoded_features)} encoded categorical features from preprocessing")
-        else:
-            print("Preprocessed data not found. Loading raw data...")
-            print("Consider running: python feature_engineering/preprocess_creditcard.py")
-            # Read the raw creditcard dataset
-            df = pd.read_csv(prefix + 'vod_creditcard.csv')
-        
-        # Convert labels if not already done
-        if 'Labels' not in df.columns:
-            if 'auth_msg' in df.columns:
-                # Create labels based on auth_msg
-                print("Creating labels from auth_msg field...")
-                
-                # Define fraud patterns
-                fraud_patterns = [
-                    'DECLINE', 'INSUFF FUNDS', 'CALL', 'INVALID MERCHANT',
-                    'BLOCKED', 'DECLINE SH', 'DECLINE SC', 'TERM ID ERROR',
-                    'INVALID TRANS', 'ACCT LENGTH ERR', 'STOLEN CARD',
-                    'LOST CARD', 'PICKUP CARD', 'FRAUD', 'SECURITY VIOLATION',
-                    'RESTRICTED CARD', 'EXPIRED CARD'
-                ]
-                
-                # Default to non-fraud
-                df['Labels'] = 0
-                
-                # Mark as fraud if auth_msg contains any fraud pattern
-                for pattern in fraud_patterns:
-                    mask = df['auth_msg'].str.contains(pattern, case=False, na=False)
-                    df.loc[mask, 'Labels'] = 1
-                
-                # Ensure approved transactions are marked as non-fraud
-                approved_mask = df['auth_msg'].str.contains('APPROVED', case=False, na=False)
-                df.loc[approved_mask, 'Labels'] = 0
-                
-                print(f"Label distribution - Fraud: {df['Labels'].mean():.2%}")
-            else:
-                print("Warning: No auth_msg column found, using IS_TARGETED if available")
-                if 'IS_TARGETED' in df.columns:
-                    df['Labels'] = df['IS_TARGETED'].map({'yes': 1, 'no': 0})
-                else:
-                    raise ValueError("Neither auth_msg nor IS_TARGETED columns found for labels")
-        
-        # Handle datetime columns
-        date_columns = ['issue_date', 'capture_date', 'created_date', 'updated_date']
-        for col in date_columns:
-            if col in df.columns:
-                # Convert to datetime, handling NULL values
-                df[col] = pd.to_datetime(df[col], errors='coerce')
-                # Convert to seconds since first transaction
-                if not df[col].isna().all():
-                    min_date = df[col].min()
-                    df[col + '_seconds'] = (df[col] - min_date).dt.total_seconds()
-                    df[col + '_seconds'] = df[col + '_seconds'].fillna(0)
-        
-        # Select numerical features
-        num_features = ['amount', 'issue_date_seconds']
-        
-        # Select categorical features for embeddings - only use columns that exist
-        potential_cat_features = ['trans_status_msg_id', 'site_tag_id', 'origin_id', 
-                                 'currency_id', 'card_type_id', 'processor_id', 
-                                 'trans_status_code', 'BRAND', 'DEBITCREDIT', 'CARDTYPE']
-        
-        # Filter to only columns that exist in the dataframe
-        cat_features_list = [col for col in potential_cat_features if col in df.columns]
-        
-        print(f"Available categorical features: {cat_features_list}")
-        
-        # Handle missing values in categorical features
-        for col in cat_features_list:
-            df[col] = df[col].fillna(-1)
-            # Convert to string first to handle mixed types
-            df[col] = df[col].astype(str)
-        
-        # Build graph - use preprocessed adjacency lists if available
-        if 'adjacency_lists' in locals():
-            # Use preprocessed adjacency lists
-            g = dgl.graph([])
-            g.add_nodes(len(df))
-            edge_src = []
-            edge_dst = []
-            for src, dsts in adjacency_lists.items():
-                for dst in dsts:
-                    edge_src.append(src)
-                    edge_dst.append(dst)
-            if edge_src:
-                g.add_edges(edge_src, edge_dst)
-            # Add self-loops to handle isolated nodes
+            # Build DGL graph
+            src = []
+            tgt = []
+            for i in homo:
+                for j in homo[i]:
+                    src.append(i)
+                    tgt.append(j)
+            src = np.array(src)
+            tgt = np.array(tgt)
+            g = dgl.graph((src, tgt))
             g = dgl.add_self_loop(g)
+            g.ndata['label'] = torch.from_numpy(labels.to_numpy()).to(torch.long)
+            g.ndata['feat'] = torch.from_numpy(feat_data.to_numpy()).to(torch.float32)
+            
+            graph_path = prefix + "graph-{}.bin".format(dataset)
+            dgl.data.utils.save_graphs(graph_path, [g])
+            
+            print(f"Loaded CreditCard dataset: {len(labels)} nodes, {len(src)} edges")
+            print(f"Feature dimension: {feat_data.shape[1]}")
+            print(f"Fraud rate: {labels.mean():.2%}")
+            
         else:
-            # Build graph from scratch
-            g = dgl.graph([])
-            g.add_nodes(len(df))
+            # Fall back to CSV preprocessing approach
+            print(f"CreditCard.mat not found. Checking for preprocessed CSV data...")
             
-            # Define key columns for edge creation
-            key_columns = ['card_number', 'member_id', 'customer_ip', 'customer_email', 'BIN']
+            # Check if preprocessed data exists (try realistic version first)
+            preprocessed_file = prefix + 'creditcard_realistic_preprocessed.csv'
+            adj_file = prefix + 'creditcard_realistic_adjlists.pickle'
+            neigh_file = prefix + 'creditcard_realistic_neigh_feat.csv'
+            split_file = prefix + 'creditcard_realistic_splits.pickle'
             
-            edge_src = []
-            edge_dst = []
+            # Fall back to original preprocessing if realistic doesn't exist
+            if not os.path.exists(preprocessed_file):
+                preprocessed_file = prefix + 'creditcard_preprocessed.csv'
+                adj_file = prefix + 'creditcard_homo_adjlists.pickle'
+                neigh_file = prefix + 'creditcard_neigh_feat.csv'
+                split_file = None
             
-            for col in key_columns:
-                if col in df.columns:
-                    # Group by the key column
-                    mapping = defaultdict(list)
-                    for idx, val in enumerate(df[col]):
-                        if pd.notna(val) and val != '':  # Skip null/empty values
-                            mapping[val].append(idx)
+            if os.path.exists(preprocessed_file) and os.path.exists(adj_file):
+                print("Loading preprocessed creditcard data...")
+                df = pd.read_csv(preprocessed_file)
+                
+                # Load adjacency lists
+                with open(adj_file, 'rb') as f:
+                    adjacency_lists = pickle.load(f)
+                
+                # Try to load neighborhood features
+                if os.path.exists(neigh_file):
+                    neigh_features = pd.read_csv(neigh_file)
+                    print("Loaded neighborhood features.")
                     
-                    # Create edges between transactions with same key value
-                    for idxs in mapping.values():
-                        if len(idxs) > 1:
-                            # Create all permutations of edges
-                            for i, j in itertools.permutations(idxs, 2):
-                                edge_src.append(i)
-                                edge_dst.append(j)
+                # When using preprocessed data, categorical features are already encoded
+                # For RGTAN with preprocessed data, we don't need separate categorical features
+                # since they're already included in the feature matrix as encoded values
+                cat_features = []
+                encoded_features = [col for col in df.columns if col.endswith('_encoded')]
+                print(f"Found {len(encoded_features)} encoded categorical features from preprocessing")
+            else:
+                print("Preprocessed data not found. Loading raw data...")
+                print("Consider running: python feature_engineering/preprocess_creditcard.py")
+                # Read the raw creditcard dataset
+                df = pd.read_csv(prefix + 'vod_creditcard.csv')
+        
+            # Convert labels if not already done
+            if 'Labels' not in df.columns:
+                if 'auth_msg' in df.columns:
+                    # Create labels based on auth_msg
+                    print("Creating labels from auth_msg field...")
+                    
+                    # Define fraud patterns
+                    fraud_patterns = [
+                        'DECLINE', 'INSUFF FUNDS', 'CALL', 'INVALID MERCHANT',
+                        'BLOCKED', 'DECLINE SH', 'DECLINE SC', 'TERM ID ERROR',
+                        'INVALID TRANS', 'ACCT LENGTH ERR', 'STOLEN CARD',
+                        'LOST CARD', 'PICKUP CARD', 'FRAUD', 'SECURITY VIOLATION',
+                        'RESTRICTED CARD', 'EXPIRED CARD'
+                    ]
+                    
+                    # Default to non-fraud
+                    df['Labels'] = 0
+                    
+                    # Mark as fraud if auth_msg contains any fraud pattern
+                    for pattern in fraud_patterns:
+                        mask = df['auth_msg'].str.contains(pattern, case=False, na=False)
+                        df.loc[mask, 'Labels'] = 1
+                    
+                    # Ensure approved transactions are marked as non-fraud
+                    approved_mask = df['auth_msg'].str.contains('APPROVED', case=False, na=False)
+                    df.loc[approved_mask, 'Labels'] = 0
+                    
+                    print(f"Label distribution - Fraud: {df['Labels'].mean():.2%}")
+                else:
+                    print("Warning: No auth_msg column found, using IS_TARGETED if available")
+                    if 'IS_TARGETED' in df.columns:
+                        df['Labels'] = df['IS_TARGETED'].map({'yes': 1, 'no': 0})
+                    else:
+                        raise ValueError("Neither auth_msg nor IS_TARGETED columns found for labels")
             
-            # Add edges to graph
-            if edge_src:
-                g.add_edges(edge_src, edge_dst)
+            # Handle datetime columns
+            date_columns = ['issue_date', 'capture_date', 'created_date', 'updated_date']
+            for col in date_columns:
+                if col in df.columns:
+                    # Convert to datetime, handling NULL values
+                    df[col] = pd.to_datetime(df[col], errors='coerce')
+                    # Convert to seconds since first transaction
+                    if not df[col].isna().all():
+                        min_date = df[col].min()
+                        df[col + '_seconds'] = (df[col] - min_date).dt.total_seconds()
+                        df[col + '_seconds'] = df[col + '_seconds'].fillna(0)
+            
+            # Select numerical features
+            num_features = ['amount', 'issue_date_seconds']
+            
+            # Select categorical features for embeddings - only use columns that exist
+            potential_cat_features = ['trans_status_msg_id', 'site_tag_id', 'origin_id', 
+                                     'currency_id', 'card_type_id', 'processor_id', 
+                                     'trans_status_code', 'BRAND', 'DEBITCREDIT', 'CARDTYPE']
+            
+            # Filter to only columns that exist in the dataframe
+            cat_features_list = [col for col in potential_cat_features if col in df.columns]
+            
+            print(f"Available categorical features: {cat_features_list}")
+            
+            # Handle missing values in categorical features
+            for col in cat_features_list:
+                df[col] = df[col].fillna(-1)
+                # Convert to string first to handle mixed types
+                df[col] = df[col].astype(str)
+            
+            # Build graph - use preprocessed adjacency lists if available
+            if 'adjacency_lists' in locals():
+                # Use preprocessed adjacency lists
+                g = dgl.graph([])
+                g.add_nodes(len(df))
+                edge_src = []
+                edge_dst = []
+                for src, dsts in adjacency_lists.items():
+                    for dst in dsts:
+                        edge_src.append(src)
+                        edge_dst.append(dst)
+                if edge_src:
+                    g.add_edges(edge_src, edge_dst)
+                # Add self-loops to handle isolated nodes
+                g = dgl.add_self_loop(g)
+            else:
+                # Build graph from scratch
+                g = dgl.graph([])
+                g.add_nodes(len(df))
+                
+                # Define key columns for edge creation
+                key_columns = ['card_number', 'member_id', 'customer_ip', 'customer_email', 'BIN']
+                
+                edge_src = []
+                edge_dst = []
+                
+                for col in key_columns:
+                    if col in df.columns:
+                        # Group by the key column
+                        mapping = defaultdict(list)
+                        for idx, val in enumerate(df[col]):
+                            if pd.notna(val) and val != '':  # Skip null/empty values
+                                mapping[val].append(idx)
+                        
+                        # Create edges between transactions with same key value
+                        for idxs in mapping.values():
+                            if len(idxs) > 1:
+                                # Create all permutations of edges
+                                for i, j in itertools.permutations(idxs, 2):
+                                    edge_src.append(i)
+                                    edge_dst.append(j)
+                
+                # Add edges to graph
+                if edge_src:
+                    g.add_edges(edge_src, edge_dst)
+                
+                # Add self-loops to handle isolated nodes
+                g = dgl.add_self_loop(g)
+            
+            print(f"Created graph with {g.number_of_nodes()} nodes and {g.number_of_edges()} edges")
+            
+            # Prepare feature data
+            # Use scaled features if available (from preprocessing)
+            scaled_cols = [col for col in df.columns if col.endswith('_scaled')]
+            if scaled_cols:
+                print(f"Using {len(scaled_cols)} scaled features from preprocessing")
+                feat_cols = scaled_cols
+                
+                # Also include encoded categorical features if they exist
+                encoded_cols = [col for col in df.columns if col.endswith('_encoded')]
+                if encoded_cols:
+                    print(f"Using {len(encoded_cols)} encoded categorical features from preprocessing")
+                    feat_cols.extend(encoded_cols)
+            else:
+                # Build features from scratch
+                # Combine numerical features
+                feat_cols = []
+                for col in num_features:
+                    if col in df.columns:
+                        feat_cols.append(col)
+                
+                # Add encoded categorical features
+                for col in cat_features_list:
+                    if col + '_encoded' not in df.columns:
+                        le = LabelEncoder()
+                        df[col + '_encoded'] = le.fit_transform(df[col].astype(str))
+                    feat_cols.append(col + '_encoded')
+            
+            # Create feat_data with all necessary columns for RGTAN
+            # Include both the feature columns AND the original categorical columns
+            all_cols = feat_cols + [col for col in cat_features if col in df.columns and col not in feat_cols]
+            feat_data = df[all_cols].copy()
+            
+            # Ensure categorical columns are properly typed
+            for col in cat_features:
+                if col in feat_data.columns:
+                    # Convert to numeric, filling non-numeric values with -1
+                    feat_data[col] = pd.to_numeric(feat_data[col], errors='coerce').fillna(-1).astype(int)
+            
+            # Fill any remaining NaN values
+            feat_data = feat_data.fillna(0)
+            labels = df['Labels']
+            
+            # Add node features to graph (only the numerical features)
+            g.ndata['label'] = torch.from_numpy(labels.to_numpy()).to(torch.long)
+            g.ndata['feat'] = torch.from_numpy(df[feat_cols].to_numpy()).to(torch.float32)
             
             # Add self-loops to handle isolated nodes
             g = dgl.add_self_loop(g)
-        
-        print(f"Created graph with {g.number_of_nodes()} nodes and {g.number_of_edges()} edges")
-        
-        # Prepare feature data
-        # Use scaled features if available (from preprocessing)
-        scaled_cols = [col for col in df.columns if col.endswith('_scaled')]
-        if scaled_cols:
-            print(f"Using {len(scaled_cols)} scaled features from preprocessing")
-            feat_cols = scaled_cols
             
-            # Also include encoded categorical features if they exist
-            encoded_cols = [col for col in df.columns if col.endswith('_encoded')]
-            if encoded_cols:
-                print(f"Using {len(encoded_cols)} encoded categorical features from preprocessing")
-                feat_cols.extend(encoded_cols)
-        else:
-            # Build features from scratch
-            # Combine numerical features
-            feat_cols = []
-            for col in num_features:
-                if col in df.columns:
-                    feat_cols.append(col)
+            # Save graph
+            graph_path = prefix + "graph-{}.bin".format(dataset)
+            dgl.data.utils.save_graphs(graph_path, [g])
             
-            # Add encoded categorical features
-            for col in cat_features_list:
-                if col + '_encoded' not in df.columns:
-                    le = LabelEncoder()
-                    df[col + '_encoded'] = le.fit_transform(df[col].astype(str))
-                feat_cols.append(col + '_encoded')
-        
-        # Create feat_data with all necessary columns for RGTAN
-        # Include both the feature columns AND the original categorical columns
-        all_cols = feat_cols + [col for col in cat_features if col in df.columns and col not in feat_cols]
-        feat_data = df[all_cols].copy()
-        
-        # Ensure categorical columns are properly typed
-        for col in cat_features:
-            if col in feat_data.columns:
-                # Convert to numeric, filling non-numeric values with -1
-                feat_data[col] = pd.to_numeric(feat_data[col], errors='coerce').fillna(-1).astype(int)
-        
-        # Fill any remaining NaN values
-        feat_data = feat_data.fillna(0)
-        labels = df['Labels']
-        
-        # Add node features to graph (only the numerical features)
-        g.ndata['label'] = torch.from_numpy(labels.to_numpy()).to(torch.long)
-        g.ndata['feat'] = torch.from_numpy(df[feat_cols].to_numpy()).to(torch.float32)
-        
-        # Add self-loops to handle isolated nodes
-        g = dgl.add_self_loop(g)
-        
-        # Save graph
-        graph_path = prefix + "graph-{}.bin".format(dataset)
-        dgl.data.utils.save_graphs(graph_path, [g])
-        
-        # Split data - use saved splits if available (for realistic preprocessing)
-        if split_file and os.path.exists(split_file):
-            print("Using saved train/test splits...")
-            with open(split_file, 'rb') as f:
-                splits = pickle.load(f)
-                train_mask = splits['train_mask']
-                train_idx = df[train_mask].index.tolist()
-                test_idx = df[~train_mask].index.tolist()
-        else:
-            # Fall back to time-based split
-            print("Creating time-based split...")
-            df_sorted = df.sort_values('issue_date')
-            split_idx = int(len(df_sorted) * 0.7)
+            # Split data - use saved splits if available (for realistic preprocessing)
+            if split_file and os.path.exists(split_file):
+                print("Using saved train/test splits...")
+                with open(split_file, 'rb') as f:
+                    splits = pickle.load(f)
+                    train_mask = splits['train_mask']
+                    train_idx = df[train_mask].index.tolist()
+                    test_idx = df[~train_mask].index.tolist()
+            else:
+                # Fall back to time-based split
+                print("Creating time-based split...")
+                df_sorted = df.sort_values('issue_date')
+                split_idx = int(len(df_sorted) * 0.7)
+                
+                train_idx = df_sorted.index[:split_idx].tolist()
+                test_idx = df_sorted.index[split_idx:].tolist()
             
-            train_idx = df_sorted.index[:split_idx].tolist()
-            test_idx = df_sorted.index[split_idx:].tolist()
-        
-        print(f"Train set: {len(train_idx)} transactions, Test set: {len(test_idx)} transactions")
-        print(f"Train fraud rate: {labels.iloc[train_idx].mean():.2%}")
-        print(f"Test fraud rate: {labels.iloc[test_idx].mean():.2%}")
-        
-        # Try to load neighborhood features if available
-        try:
-            feat_neigh = pd.read_csv(prefix + "creditcard_neigh_feat.csv")
-            print("neighborhood feature loaded for nn input.")
-            neigh_features = feat_neigh
-        except FileNotFoundError:
-            print("no neighborhood feature used - file not found.")
-            neigh_features = []
-        except Exception as e:
-            print(f"Error loading neighborhood features: {e}")
-            neigh_features = []
-        
-        # For creditcard with raw data, set categorical features
-        if 'cat_features' not in locals():
-            cat_features = [col for col in cat_features_list if col in df.columns]
+            print(f"Train set: {len(train_idx)} transactions, Test set: {len(test_idx)} transactions")
+            print(f"Train fraud rate: {labels.iloc[train_idx].mean():.2%}")
+            print(f"Test fraud rate: {labels.iloc[test_idx].mean():.2%}")
+            
+            # Try to load neighborhood features if available
+            try:
+                feat_neigh = pd.read_csv(prefix + "creditcard_neigh_feat.csv")
+                print("neighborhood feature loaded for nn input.")
+                neigh_features = feat_neigh
+            except FileNotFoundError:
+                print("no neighborhood feature used - file not found.")
+                neigh_features = []
+            except Exception as e:
+                print(f"Error loading neighborhood features: {e}")
+                neigh_features = []
+            
+            # For creditcard with raw data, set categorical features
+            if 'cat_features' not in locals():
+                cat_features = [col for col in cat_features_list if col in df.columns]
 
     return feat_data, labels, train_idx, test_idx, g, cat_features, neigh_features
