@@ -505,6 +505,15 @@ def load_rgtan_data(dataset: str, test_size: float):
             print(f"Feature dimension: {feat_data.shape[1]}")
             print(f"Fraud rate: {labels.mean():.2%}")
             
+            # Try to load neighborhood features if available
+            neigh_file = prefix + 'creditcard_neigh_feat.csv'
+            if os.path.exists(neigh_file):
+                neigh_features = pd.read_csv(neigh_file)
+                print("Loaded neighborhood features.")
+            else:
+                print("No neighborhood features found. RGTAN will run without them.")
+                neigh_features = []
+            
         else:
             # Fall back to CSV preprocessing approach
             print(f"CreditCard.mat not found. Checking for preprocessed CSV data...")

@@ -35,15 +35,17 @@ def load_lpa_subtensor(
                 batch_labels, propagate_labels)
     """
     # masking to avoid label leakage
-    if "1hop_riskstat" in neigh_feat.keys() and len(blocks) >= 2:
-        # nei_hop1 = get_k_neighs(graph, seeds, 1)
-        nei_hop1 = blocks[-2].dstdata['_ID']
-        neigh_feat['1hop_riskstat'][nei_hop1] = 0
+    # Check if neigh_feat is a DataFrame/dict (not an empty list)
+    if hasattr(neigh_feat, 'keys'):
+        if "1hop_riskstat" in neigh_feat.keys() and len(blocks) >= 2:
+            # nei_hop1 = get_k_neighs(graph, seeds, 1)
+            nei_hop1 = blocks[-2].dstdata['_ID']
+            neigh_feat['1hop_riskstat'][nei_hop1] = 0
 
-    if "2hop_riskstat" in neigh_feat.keys() and len(blocks) >= 3:
-        # nei_hop2 = get_k_neighs(graph, seeds, 2)
-        nei_hop2 = blocks[-3].dstdata['_ID']
-        neigh_feat['2hop_riskstat'][nei_hop2] = 0
+        if "2hop_riskstat" in neigh_feat.keys() and len(blocks) >= 3:
+            # nei_hop2 = get_k_neighs(graph, seeds, 2)
+            nei_hop2 = blocks[-3].dstdata['_ID']
+            neigh_feat['2hop_riskstat'][nei_hop2] = 0
 
     # Efficiently move data to device without unnecessary copies
     batch_inputs = node_feat[input_nodes].to(device)
@@ -52,7 +54,8 @@ def load_lpa_subtensor(
 
     batch_neighstat_inputs = None
 
-    if neigh_feat:
+    # Check if neigh_feat is a DataFrame/dict with data (not an empty list or None)
+    if neigh_feat and hasattr(neigh_feat, 'keys'):
         batch_neighstat_inputs = {col: neigh_feat[col][input_nodes].to(
             device) for col in neigh_feat.keys()}
 
