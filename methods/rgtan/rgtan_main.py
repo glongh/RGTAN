@@ -493,7 +493,7 @@ def load_rgtan_data(dataset: str, test_size: float):
                     tgt.append(j)
             src = np.array(src)
             tgt = np.array(tgt)
-            g = dgl.graph((src, tgt))
+            g = dgl.graph((src, tgt), num_nodes=len(labels))
             g = dgl.add_self_loop(g)
             g.ndata['label'] = torch.from_numpy(labels.to_numpy()).to(torch.long)
             g.ndata['feat'] = torch.from_numpy(feat_data.to_numpy()).to(torch.float32)
