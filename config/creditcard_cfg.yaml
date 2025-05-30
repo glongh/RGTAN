@@ -1,4 +1,4 @@
-batch_size: 64
+batch_size: 256  # Increased to ensure fraud samples in each batch
 hid_dim: 256
 # Note: in_feats for RGTAN will be number of features (41 in this case)
 # nei_att_heads should divide evenly into in_feats

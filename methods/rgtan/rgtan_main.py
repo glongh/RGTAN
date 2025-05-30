@@ -87,7 +87,14 @@ def rgtan_main(feat_df, graph, train_idx, test_idx, labels, args, cat_features, 
         
     y = labels
     labels = torch.from_numpy(y.values).long().to(device)
-    loss_fn = nn.CrossEntropyLoss().to(device)
+    
+    # Calculate class weights for imbalanced dataset
+    class_counts = np.bincount(y.values)
+    class_weights = len(y) / (len(class_counts) * class_counts)
+    class_weights = torch.FloatTensor(class_weights).to(device)
+    print(f"Class weights: {class_weights.cpu().numpy()}")
+    
+    loss_fn = nn.CrossEntropyLoss(weight=class_weights).to(device)
     for fold, (trn_idx, val_idx) in enumerate(kfold.split(feat_df.iloc[train_idx], y_target)):
         print(f'Training fold {fold + 1}')
         trn_ind, val_ind = torch.from_numpy(np.array(train_idx)[trn_idx]).long().to(
