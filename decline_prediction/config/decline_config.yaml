@@ -1,0 +1,323 @@
+# Real-time Decline Prediction Configuration
+# Configuration for RGTAN-based decline prediction system
+
+# Data Configuration
+data:
+  # Paths to input data files
+  data_path: "../data"
+  denied_file: "denied_transactions_20250609.csv"
+  approved_file: "ok_transactions_20250606.csv"
+  
+  # Preprocessing settings
+  temporal_split_days: 15  # Days for test set (shorter for real-time simulation)
+  balance_ratio: 2  # Approved:Denied ratio for training
+  
+  # Graph construction parameters (lightweight for real-time)
+  max_card_history: 5      # Reduced for speed
+  max_ip_history: 10
+  max_merchant_history: 20
+  time_window_hours: 1     # Short window for real-time
+  
+# Model Configuration
+model:
+  # Architecture parameters (optimized for speed)
+  hidden_dim: 128          # Smaller for faster inference
+  n_layers: 2
+  heads: [4, 4]            # Attention heads per layer
+  dropout: [0.1, 0.1, 0.1] # Lower dropout for stability
+  activation: "relu"
+  
+  # Training parameters
+  learning_rate: 0.001
+  weight_decay: 0.00001    # Lower weight decay
+  batch_size: 1024         # Larger batch for efficiency
+  epochs: 30
+  patience: 8              # Early stopping patience
+  
+  # Multi-task learning
+  enable_multitask: true
+  task_weights:
+    decline: 2.0           # Main task weight
+    insufficient_funds: 1.0
+    security: 1.5
+    invalid_merchant: 1.0
+  
+  # Device settings
+  device: "auto"           # "auto", "cpu", "cuda"
+
+# Feature Engineering (Real-time Optimized)
+features:
+  # Basic features (fast computation)
+  temporal_features:
+    extract_hour: true
+    extract_day_of_week: true
+    extract_weekend: true
+    extract_business_hours: true
+    extract_night_hours: true
+  
+  # Amount features (instant)
+  amount_features:
+    log_transform: true
+    round_amount_detection: true
+    exact_dollar_detection: true
+    high_amount_threshold: 0.95  # Percentile
+    low_amount_threshold: 0.05
+  
+  # Card and geographic features
+  card_features:
+    debit_credit_flag: true
+    domestic_international: true
+    billing_zip_present: true
+  
+  # Graph features (lightweight)
+  graph_features:
+    neighborhood_hops: [1]   # Only 1-hop for speed
+    compute_decline_rates: true
+    max_neighbors: 20        # Limit for performance
+  
+  # Velocity features (cached)
+  velocity_features:
+    hours_since_last: true
+    transactions_per_day: true
+    amount_ratio: true
+    
+# Business Rules
+business:
+  # Cost parameters
+  average_decline_cost: 15.0        # Cost of false decline
+  false_positive_review_cost: 5.0   # Cost of manual review
+  average_transaction_value: 75.0
+  
+  # Decision thresholds
+  high_risk_threshold: 0.8
+  medium_risk_threshold: 0.5
+  low_risk_threshold: 0.2
+  
+  # Performance targets
+  target_false_decline_rate: 0.02   # Max 2% false decline rate
+  target_response_time_ms: 100      # Max 100ms response time
+  min_decline_prediction_accuracy: 0.75
+
+# API Configuration
+api:
+  # Server settings
+  host: "0.0.0.0"
+  port: 8000
+  workers: 1               # Single worker for model consistency
+  
+  # Performance settings
+  max_request_size: 1048576  # 1MB
+  timeout_seconds: 30
+  max_concurrent_requests: 100
+  
+  # Batch processing
+  enable_batch_endpoint: true
+  max_batch_size: 100
+  
+  # Rate limiting
+  enable_rate_limiting: false
+  requests_per_minute: 1000
+  
+  # Monitoring
+  enable_metrics: true
+  metrics_retention_hours: 24
+
+# Caching Configuration
+cache:
+  # Redis settings
+  redis:
+    enabled: false           # Set to true for production
+    host: "localhost"
+    port: 6379
+    db: 0
+    password: null
+    socket_timeout: 1.0
+  
+  # Cache TTL settings (seconds)
+  ttl:
+    entity_stats: 86400     # 24 hours
+    velocity_features: 3600  # 1 hour
+    graph_features: 1800    # 30 minutes
+    model_features: 300     # 5 minutes
+  
+  # Local cache settings
+  local_cache:
+    max_size: 1000
+    ttl_seconds: 300
+  
+  # Cache warming
+  warm_cache_on_startup: true
+  cache_hit_rate_target: 0.8
+
+# Monitoring and Logging
+monitoring:
+  # Performance metrics
+  track_response_times: true
+  track_prediction_accuracy: true
+  track_business_metrics: true
+  
+  # Alerting thresholds
+  alerts:
+    high_latency_ms: 200
+    low_accuracy_threshold: 0.7
+    high_error_rate: 0.05
+    cache_miss_rate: 0.5
+  
+  # Model drift detection
+  drift_detection:
+    enabled: true
+    feature_drift_threshold: 0.1
+    prediction_drift_threshold: 0.05
+    check_interval_hours: 24
+
+# Logging Configuration
+logging:
+  level: "INFO"            # DEBUG, INFO, WARNING, ERROR
+  format: "json"           # json, text
+  log_file: "logs/decline_api.log"
+  max_log_size_mb: 100
+  backup_count: 5
+  
+  # Request logging
+  log_requests: true
+  log_predictions: false   # Set to true for debugging
+  log_features: false      # Set to true for feature analysis
+  
+  # Performance logging
+  log_response_times: true
+  log_cache_stats: true
+
+# Security Configuration
+security:
+  # Data protection
+  hash_sensitive_fields: true
+  hash_algorithm: "sha256"
+  hash_length: 16
+  
+  # API security
+  enable_cors: true
+  allowed_origins: ["*"]   # Restrict in production
+  
+  # Input validation
+  validate_request_data: true
+  sanitize_inputs: true
+  
+  # Rate limiting
+  enable_ip_whitelisting: false
+  whitelisted_ips: []
+
+# Model Persistence
+persistence:
+  # Model saving
+  model_save_path: "models/decline_rgtan_model.pt"
+  backup_models: true
+  max_model_versions: 3
+  
+  # Model loading
+  load_on_startup: true
+  model_validation: true
+  
+  # Auto-retraining
+  auto_retrain:
+    enabled: false
+    trigger_interval_days: 7
+    min_new_samples: 1000
+    performance_threshold: 0.75
+
+# Deployment Configuration
+deployment:
+  # Environment
+  environment: "development"  # development, staging, production
+  
+  # AWS settings
+  aws:
+    region: "us-east-1"
+    ecs_cluster: null
+    load_balancer: null
+    auto_scaling: false
+  
+  # Docker settings
+  docker:
+    image_name: "decline-prediction"
+    tag: "latest"
+    expose_port: 8000
+    memory_limit: "2g"
+    cpu_limit: "1"
+  
+  # Health checks
+  health_check:
+    enabled: true
+    endpoint: "/health"
+    interval_seconds: 30
+    timeout_seconds: 5
+    retries: 3
+
+# Testing Configuration
+testing:
+  # Unit tests
+  enable_unit_tests: true
+  test_data_size: 1000
+  
+  # Load testing
+  load_testing:
+    enabled: false
+    concurrent_users: 50
+    test_duration_minutes: 5
+    target_rps: 100
+  
+  # Model validation
+  model_validation:
+    holdout_percentage: 0.2
+    cross_validation_folds: 5
+    min_auc_threshold: 0.75
+
+# Feature Store Integration
+feature_store:
+  enabled: false
+  provider: "feast"        # feast, tecton
+  
+  # Feature definitions
+  features:
+    entity_stats:
+      ttl_hours: 24
+      batch_source: "entity_stats_table"
+    
+    velocity_features:
+      ttl_hours: 1
+      stream_source: "velocity_stream"
+
+# Environment Specific Overrides
+environments:
+  development:
+    logging:
+      level: "DEBUG"
+    cache:
+      redis:
+        enabled: false
+    monitoring:
+      track_prediction_accuracy: false
+  
+  staging:
+    api:
+      workers: 2
+    cache:
+      redis:
+        enabled: true
+    monitoring:
+      track_prediction_accuracy: true
+  
+  production:
+    api:
+      workers: 4
+      max_concurrent_requests: 500
+    cache:
+      redis:
+        enabled: true
+    security:
+      allowed_origins: ["https://your-domain.com"]
+    monitoring:
+      drift_detection:
+        enabled: true
+    logging:
+      level: "WARNING"
+      log_predictions: false
