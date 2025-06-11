@@ -11,15 +11,48 @@ import seaborn as sns
 from sklearn.metrics import (roc_auc_score, f1_score, average_precision_score, 
                            precision_recall_curve, roc_curve, confusion_matrix)
 import json
+import yaml
 from datetime import datetime
 import os
+
+def load_business_config(config_path=None):
+    """Load business configuration from YAML file"""
+    if config_path is None:
+        config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'fraud_config.yaml')
+    
+    try:
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        
+        business_config = config.get('business', {})
+        return {
+            'avg_chargeback_cost': business_config.get('average_chargeback_cost', 85),
+            'avg_transaction_value': business_config.get('average_transaction_value', 75),
+            'false_positive_review_cost': business_config.get('false_positive_review_cost', 22)
+        }
+    except Exception as e:
+        print(f"Warning: Could not load config file {config_path}: {e}")
+        # Return defaults
+        return {
+            'avg_chargeback_cost': 85,
+            'avg_transaction_value': 75,
+            'false_positive_review_cost': 22
+        }
 
 class FraudEvaluator:
     """Comprehensive fraud detection evaluation toolkit"""
     
-    def __init__(self, avg_chargeback_cost=50, avg_transaction_value=75):
-        self.avg_chargeback_cost = avg_chargeback_cost
-        self.avg_transaction_value = avg_transaction_value
+    def __init__(self, avg_chargeback_cost=None, avg_transaction_value=None, false_positive_review_cost=None):
+        # Load from config if not provided
+        if any(param is None for param in [avg_chargeback_cost, avg_transaction_value, false_positive_review_cost]):
+            config = load_business_config()
+            self.avg_chargeback_cost = avg_chargeback_cost or config['avg_chargeback_cost']
+            self.avg_transaction_value = avg_transaction_value or config['avg_transaction_value']
+            self.false_positive_review_cost = false_positive_review_cost or config['false_positive_review_cost']
+        else:
+            self.avg_chargeback_cost = avg_chargeback_cost
+            self.avg_transaction_value = avg_transaction_value
+            self.false_positive_review_cost = false_positive_review_cost
         
     def evaluate_model_performance(self, y_true, y_scores, y_pred=None):
         """Calculate comprehensive model performance metrics"""
@@ -87,7 +120,7 @@ class FraudEvaluator:
         # Cost calculations
         prevented_fraud_cost = tp * self.avg_chargeback_cost
         missed_fraud_cost = fn * self.avg_chargeback_cost
-        false_positive_cost = fp * 10  # Assume $10 cost per false alarm review
+        false_positive_cost = fp * self.false_positive_review_cost  # Manual review cost per false alarm
         
         # Revenue impact
         if transaction_amounts is not None:
@@ -403,8 +436,8 @@ def main():
     fraud_scores[y_true == 1] += 0.3  # Boost fraud scores
     fraud_scores = np.clip(fraud_scores, 0, 1)
     
-    # Initialize evaluator
-    evaluator = FraudEvaluator(avg_chargeback_cost=50, avg_transaction_value=75)
+    # Initialize evaluator (loads business costs from config)
+    evaluator = FraudEvaluator()
     
     # Generate comprehensive report
     report = evaluator.generate_management_report(y_true, fraud_scores)

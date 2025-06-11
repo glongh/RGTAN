@@ -1,0 +1,43 @@
+{
+  "transaction_statistics": {
+    "chargeback_statistics": {
+      "count": 16202,
+      "average_amount": 16.299692013331686,
+      "median_amount": 3.99,
+      "std_amount": 30.092714465792305,
+      "min_amount": 1.0,
+      "max_amount": 699.94,
+      "percentiles": {
+        "p25": 1.0,
+        "p50": 3.99,
+        "p75": 29.97,
+        "p90": 39.97,
+        "p95": 49.99
+      }
+    },
+    "ok_transaction_statistics": {
+      "count": 1300432,
+      "average_amount": 10.97552966245064,
+      "median_amount": 3.99,
+      "std_amount": 21.71950665387808,
+      "min_amount": -699.94,
+      "max_amount": 999.94,
+      "percentiles": {
+        "p25": 1.0,
+        "p50": 3.99,
+        "p75": 9.99,
+        "p90": 29.99,
+        "p95": 39.97
+      }
+    },
+    "overall_statistics": {
+      "total_transactions": 1316634,
+      "fraud_rate": 0.012305621759729735,
+      "average_transaction_value": 11.041046790527973,
+      "total_chargeback_amount": 264087.61,
+      "total_ok_amount": 14272929.99000001,
+      "chargeback_to_ok_ratio": 1.4850938874591184
+    },
+    "amount_distribution": {
+      "chargeback_distribution": {
+        

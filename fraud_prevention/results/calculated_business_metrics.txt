@@ -1,0 +1,43 @@
+
+CALCULATED BUSINESS METRICS REPORT
+==================================
+Generated: 2025-06-10 23:14:15
+
+TRANSACTION STATISTICS
+---------------------
+Total Transactions: 1,316,634
+Fraud Rate: 1.23%
+
+Chargeback Transactions:
+- Count: 16,202
+- Average Amount: $16.30
+- Median Amount: $3.99
+- 95th Percentile: $49.99
+
+Legitimate Transactions:
+- Count: 1,300,432
+- Average Amount: $10.98
+- Median Amount: $3.99
+
+COST CALCULATIONS
+-----------------
+Average Chargeback Cost: $67.66
+  - Transaction Amount: $16.30
+  - Chargeback Fee: $20.00
+  - Processing Cost: $0.65
+  - Administrative Cost: $25.00
+  - Lost Merchandise Value: $5.70
+
+Manual Review Cost: $11.38
+  - Review Time: 15 minutes
+  - Analyst Rate: $35.00/hour
+  - Overhead: 30%
+
+RECOMMENDED CONFIG VALUES
+------------------------
+average_chargeback_cost: 67.66
+average_transaction_value: 11.04
+false_positive_review_cost: 11.38
+
+Note: These values are calculated from actual transaction data and include
+industry-standard costs for fees, processing, and administrative overhead.
