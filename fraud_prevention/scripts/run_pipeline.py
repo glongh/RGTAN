@@ -121,11 +121,19 @@ def main():
         logger.info("STEP 2: GRAPH FEATURE GENERATION")
         logger.info("="*30)
         
-        success = run_command(
-            "python generate_graph_features.py",
-            "Graph construction and neighborhood feature computation",
-            logger
-        )
+        # Use fast version for large datasets
+        if os.path.exists('generate_graph_features_fast.py'):
+            success = run_command(
+                "python generate_graph_features_fast.py",
+                "Fast graph construction and neighborhood feature computation",
+                logger
+            )
+        else:
+            success = run_command(
+                "python generate_graph_features.py",
+                "Graph construction and neighborhood feature computation",
+                logger
+            )
         
         if not success:
             logger.error("Pipeline failed at graph generation step")

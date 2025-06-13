@@ -21,7 +21,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 def build_transaction_graph(df, max_edges_per_entity=100, time_window_hours=24):
     """Build graph connecting transactions with shared entities"""
-    print("\nBuilding transaction graph...")
+    print(f"\nBuilding transaction graph for {len(df)} transactions...")
+    print(f"Max edges per entity: {max_edges_per_entity}")
+    print(f"Time window: {time_window_hours} hours")
     
     # Initialize edge lists
     edge_src = []
@@ -36,48 +38,76 @@ def build_transaction_graph(df, max_edges_per_entity=100, time_window_hours=24):
         'bin': defaultdict(list)
     }
     
-    # Build entity mappings
+    # Build entity mappings with progress
+    print("Building entity mappings...")
     for idx, row in df.iterrows():
+        if idx % 100000 == 0:
+            print(f"  Processed {idx:,}/{len(df):,} transactions...")
         trans_id = row['trans_id']
         entity_maps['card'][row['entity_card']].append(trans_id)
         entity_maps['email'][row['entity_email']].append(trans_id)
         entity_maps['ip'][row['entity_ip']].append(trans_id)
         entity_maps['bin'][row['entity_bin']].append(trans_id)
     
-    # Create edges for each entity type
+    # Create edges for each entity type with optimization
+    total_edges = 0
+    max_total_edges = 10000000  # Limit to 10M edges for memory
+    
     for entity_type, entity_map in entity_maps.items():
         print(f"Creating {entity_type} edges...")
         edge_count = 0
+        entities_processed = 0
+        entities_skipped = 0
         
         for entity, trans_ids in entity_map.items():
             if len(trans_ids) < 2:
                 continue
+                
+            # Skip entities with too many transactions (likely noise)
+            if len(trans_ids) > 1000:
+                entities_skipped += 1
+                continue
             
-            # Sort by transaction time
-            trans_ids_sorted = sorted(trans_ids, 
-                                    key=lambda x: df[df['trans_id'] == x]['issue_date'].iloc[0])
+            # Check total edge limit
+            if total_edges >= max_total_edges:
+                print(f"  Reached max total edges limit ({max_total_edges:,})")
+                break
+            
+            entities_processed += 1
+            if entities_processed % 10000 == 0:
+                print(f"  Processed {entities_processed:,} entities, {edge_count:,} edges created...")
+            
+            # Sample if too many transactions
+            if len(trans_ids) > 50:
+                import random
+                trans_ids = random.sample(trans_ids, 50)
+            
+            # For efficiency, just use the transaction order (already sorted by time in preprocessing)
+            trans_ids_sorted = sorted(trans_ids)
             
             # Create edges based on entity type strategy
             if entity_type == 'card':
-                # Connect each transaction to previous 10
+                # Connect each transaction to previous 5 (reduced from 10)
                 for i in range(len(trans_ids_sorted)):
-                    for j in range(max(0, i-10), i):
+                    for j in range(max(0, i-5), i):
+                        if edge_count >= max_edges_per_entity:
+                            break
                         edge_src.append(trans_ids_sorted[j])
                         edge_dst.append(trans_ids_sorted[i])
                         edge_types.append(0)  # Card edge type
                         edge_count += 1
+                        total_edges += 1
             
             elif entity_type == 'email':
-                # Connect transactions within time window
-                for i in range(len(trans_ids_sorted)):
-                    trans_time = df[df['trans_id'] == trans_ids_sorted[i]]['issue_date'].iloc[0]
-                    for j in range(i+1, min(len(trans_ids_sorted), i+20)):
-                        other_time = df[df['trans_id'] == trans_ids_sorted[j]]['issue_date'].iloc[0]
-                        if (other_time - trans_time).total_seconds() / 3600 <= time_window_hours:
-                            edge_src.append(trans_ids_sorted[i])
-                            edge_dst.append(trans_ids_sorted[j])
-                            edge_types.append(1)  # Email edge type
-                            edge_count += 1
+                # Simplified edge creation for email
+                for i in range(1, min(len(trans_ids_sorted), 5)):
+                    if edge_count >= max_edges_per_entity or total_edges >= max_total_edges:
+                        break
+                    edge_src.append(trans_ids_sorted[i-1])
+                    edge_dst.append(trans_ids_sorted[i])
+                    edge_types.append(1)  # Email edge type
+                    edge_count += 1
+                    total_edges += 1
             
             elif entity_type == 'ip':
                 # Hub-and-spoke for large groups
@@ -125,11 +155,13 @@ def build_transaction_graph(df, max_edges_per_entity=100, time_window_hours=24):
     
     return g
 
-def compute_neighborhood_features(g, df, hop_sizes=[1, 2]):
+def compute_neighborhood_features(g, df, hop_sizes=[1]):  # Only 1-hop for efficiency
     """Compute risk statistics from graph neighborhoods"""
-    print("\nComputing neighborhood features...")
+    print(f"\nComputing neighborhood features for {g.num_nodes()} nodes...")
+    print("This may take a while for large graphs...")
     
-    # Initialize feature dictionary
+    # Initialize feature arrays
+    num_nodes = g.num_nodes()
     neigh_features = {}
     
     # Node features
@@ -140,42 +172,43 @@ def compute_neighborhood_features(g, df, hop_sizes=[1, 2]):
     for hop in hop_sizes:
         print(f"Computing {hop}-hop features...")
         
-        # Get k-hop neighbors for each node
-        neigh_features[f'{hop}hop_count'] = []
-        neigh_features[f'{hop}hop_fraud_rate'] = []
-        neigh_features[f'{hop}hop_fraud_count'] = []
-        neigh_features[f'{hop}hop_avg_amount'] = []
-        neigh_features[f'{hop}hop_std_amount'] = []
-        neigh_features[f'{hop}hop_avg_hour'] = []
+        # Initialize arrays
+        neigh_features[f'{hop}hop_count'] = np.zeros(num_nodes)
+        neigh_features[f'{hop}hop_fraud_rate'] = np.zeros(num_nodes)
+        neigh_features[f'{hop}hop_fraud_count'] = np.zeros(num_nodes)
+        neigh_features[f'{hop}hop_avg_amount'] = np.zeros(num_nodes)
+        neigh_features[f'{hop}hop_std_amount'] = np.zeros(num_nodes)
+        neigh_features[f'{hop}hop_avg_hour'] = np.ones(num_nodes) * 12  # Default to noon
         
-        for node in range(g.num_nodes()):
-            # Get k-hop subgraph
-            sg, _ = dgl.khop_in_subgraph(g, node, k=hop)
-            neighbors = sg.ndata[dgl.NID].numpy()
+        # Process in batches for efficiency
+        batch_size = 10000
+        for start_idx in range(0, num_nodes, batch_size):
+            end_idx = min(start_idx + batch_size, num_nodes)
+            if start_idx % 100000 == 0:
+                print(f"  Processing nodes {start_idx:,} to {end_idx:,}...")
             
-            # Exclude self
-            neighbors = neighbors[neighbors != node]
-            
-            if len(neighbors) == 0:
-                # No neighbors
-                neigh_features[f'{hop}hop_count'].append(0)
-                neigh_features[f'{hop}hop_fraud_rate'].append(0)
-                neigh_features[f'{hop}hop_fraud_count'].append(0)
-                neigh_features[f'{hop}hop_avg_amount'].append(0)
-                neigh_features[f'{hop}hop_std_amount'].append(0)
-                neigh_features[f'{hop}hop_avg_hour'].append(12)
-            else:
-                # Compute statistics
-                neighbor_fraud = node_fraud[neighbors]
-                neighbor_amount = node_amount[neighbors]
-                neighbor_hour = node_hour[neighbors]
+            for node in range(start_idx, end_idx):
+                # Get neighbors more efficiently
+                neighbors = g.in_edges(node)[0].numpy()
                 
-                neigh_features[f'{hop}hop_count'].append(len(neighbors))
-                neigh_features[f'{hop}hop_fraud_rate'].append(neighbor_fraud.mean().item())
-                neigh_features[f'{hop}hop_fraud_count'].append(neighbor_fraud.sum().item())
-                neigh_features[f'{hop}hop_avg_amount'].append(neighbor_amount.mean().item())
-                neigh_features[f'{hop}hop_std_amount'].append(neighbor_amount.std().item() if len(neighbors) > 1 else 0)
-                neigh_features[f'{hop}hop_avg_hour'].append(neighbor_hour.mean().item())
+                # Exclude self
+                neighbors = neighbors[neighbors != node]
+                
+                if len(neighbors) == 0:
+                    # No neighbors - defaults already set
+                    continue
+                else:
+                    # Compute statistics
+                    neighbor_fraud = node_fraud[neighbors]
+                    neighbor_amount = node_amount[neighbors]
+                    neighbor_hour = node_hour[neighbors]
+                    
+                    neigh_features[f'{hop}hop_count'][node] = len(neighbors)
+                    neigh_features[f'{hop}hop_fraud_rate'][node] = neighbor_fraud.mean().item()
+                    neigh_features[f'{hop}hop_fraud_count'][node] = neighbor_fraud.sum().item()
+                    neigh_features[f'{hop}hop_avg_amount'][node] = neighbor_amount.mean().item()
+                    neigh_features[f'{hop}hop_std_amount'][node] = neighbor_amount.std().item() if len(neighbors) > 1 else 0
+                    neigh_features[f'{hop}hop_avg_hour'][node] = neighbor_hour.mean().item()
     
     # Convert to DataFrame
     neigh_df = pd.DataFrame(neigh_features)

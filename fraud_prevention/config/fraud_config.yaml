@@ -4,7 +4,7 @@ data:
   ok_transactions_file: ok_transactions_20250612.csv
   temporal_split_days: 30
   historical_context_days: 90
-  max_edges_per_entity: 100
+  max_edges_per_entity: 50    # Reduced for faster processing
   time_window_hours: 24
   min_edge_frequency: 2
 model:
@@ -20,9 +20,9 @@ model:
   activation: prelu
   learning_rate: 0.001
   weight_decay: 0.0001
-  batch_size: 512
-  epochs: 50
-  patience: 10
+  batch_size: 256      # Reduced for stability
+  epochs: 10           # Reduced for faster training
+  patience: 5          # Reduced for faster early stopping
   use_class_weights: true
   device: auto
 features:
@@ -34,8 +34,7 @@ features:
   round_amount_detection: true
   high_amount_threshold: 0.95
   neighborhood_hops:
-  - 1
-  - 2
+  - 1    # Only 1-hop for efficiency
   compute_fraud_rates: true
   compute_velocity_features: true
   handle_missing_categories: true
