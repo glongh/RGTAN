@@ -1,5 +1,5 @@
 data:
-  data_path: /home/development/affdf/data # ../data
+  data_path: /home/development/affdf/fraud_prevention/data # ../data
   chargeback_file: dispute_chargeback_20250612.csv
   ok_transactions_file: ok_transactions_20250612.csv
   temporal_split_days: 30
