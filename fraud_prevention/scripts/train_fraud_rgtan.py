@@ -41,12 +41,25 @@ class FraudRGTAN(nn.Module):
         
         # Neighborhood feature attention
         if nei_feats_dim:
-            self.nei_att = nn.MultiheadAttention(
-                nei_feats_dim, num_heads=4, dropout=drop[0], batch_first=True
-            )
-            self.nei_proj = nn.Linear(nei_feats_dim, hidden_dim)
+            # Ensure embedding dimension is divisible by number of heads
+            # If not, project to a compatible dimension first
+            if nei_feats_dim % 4 != 0:
+                # Project to nearest dimension divisible by 4
+                projected_dim = ((nei_feats_dim // 4) + 1) * 4
+                self.nei_input_proj = nn.Linear(nei_feats_dim, projected_dim)
+                self.nei_att = nn.MultiheadAttention(
+                    projected_dim, num_heads=4, dropout=drop[0], batch_first=True
+                )
+                self.nei_proj = nn.Linear(projected_dim, hidden_dim)
+            else:
+                self.nei_input_proj = None
+                self.nei_att = nn.MultiheadAttention(
+                    nei_feats_dim, num_heads=4, dropout=drop[0], batch_first=True
+                )
+                self.nei_proj = nn.Linear(nei_feats_dim, hidden_dim)
         else:
             self.nei_att = None
+            self.nei_input_proj = None
         
         # Graph convolution layers
         self.layers = nn.ModuleList()
@@ -73,6 +86,10 @@ class FraudRGTAN(nn.Module):
         
         # Add neighborhood features if available
         if self.nei_att is not None and nei_features is not None:
+            # Project to compatible dimension if needed
+            if self.nei_input_proj is not None:
+                nei_features = self.nei_input_proj(nei_features)
+            
             nei_emb, _ = self.nei_att(nei_features, nei_features, nei_features)
             nei_emb = nei_emb.mean(dim=1)  # Average over sequence
             nei_emb = self.nei_proj(nei_emb)
