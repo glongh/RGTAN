@@ -412,8 +412,8 @@ def save_model_and_results(best_model_state, model, test_probs, test_labels, tes
 def main():
     # Configuration
     config = {
-        'data_path': '/home/development/affdf/data',
-        'output_path': '/home/development/affdf',
+        'data_path': '/home/development/affdf/fraud_prevention/data',
+        'output_path': '/home/development/affdf/fraud_prevention',
         'hidden_dim': 256,
         'n_layers': 2,
         'heads': [4, 4],
