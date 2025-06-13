@@ -246,49 +246,120 @@ def train_fraud_model(config):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
+    # GPU memory management
+    if torch.cuda.is_available():
+        print(f"GPU memory before loading: {torch.cuda.memory_allocated()/1024**2:.1f}MB")
+        torch.cuda.empty_cache()
+    
     # Load data
     data_path = config['data_path']
-    train_df = pd.read_csv(os.path.join(data_path, 'processed/train_transactions.csv'))
-    test_df = pd.read_csv(os.path.join(data_path, 'processed/test_transactions.csv'))
-    train_neigh = pd.read_csv(os.path.join(data_path, 'graph/train_neigh_features.csv'))
-    test_neigh = pd.read_csv(os.path.join(data_path, 'graph/test_neigh_features.csv'))
+    print(f"Loading data from: {data_path}")
+    
+    try:
+        train_df = pd.read_csv(os.path.join(data_path, 'processed/train_transactions.csv'))
+        print(f"Train data loaded: {len(train_df):,} rows")
+        
+        test_df = pd.read_csv(os.path.join(data_path, 'processed/test_transactions.csv'))
+        print(f"Test data loaded: {len(test_df):,} rows")
+        
+        train_neigh = pd.read_csv(os.path.join(data_path, 'graph/train_neigh_features.csv'))
+        print(f"Train neighborhood features loaded: {train_neigh.shape}")
+        
+        test_neigh = pd.read_csv(os.path.join(data_path, 'graph/test_neigh_features.csv'))
+        print(f"Test neighborhood features loaded: {test_neigh.shape}")
+    except Exception as e:
+        print(f"Error loading CSV files: {e}")
+        return 0
     
     # Load graph
-    graphs, _ = dgl.load_graphs(os.path.join(data_path, 'graph/transaction_graph.dgl'))
-    g = graphs[0]
+    try:
+        print("Loading transaction graph...")
+        graphs, _ = dgl.load_graphs(os.path.join(data_path, 'graph/transaction_graph.dgl'))
+        g = graphs[0]
+        print(f"Graph loaded: {g.num_nodes():,} nodes, {g.num_edges():,} edges")
+        
+        if torch.cuda.is_available():
+            print(f"GPU memory after loading graph: {torch.cuda.memory_allocated()/1024**2:.1f}MB")
+    except Exception as e:
+        print(f"Error loading graph: {e}")
+        return 0
     
     # Prepare features
-    (train_features, test_features, train_neigh_feat, test_neigh_feat,
-     train_labels, test_labels, scaler, neigh_scaler) = prepare_features(
-        train_df, test_df, train_neigh, test_neigh
-    )
+    try:
+        print("Preparing features...")
+        (train_features, test_features, train_neigh_feat, test_neigh_feat,
+         train_labels, test_labels, scaler, neigh_scaler) = prepare_features(
+            train_df, test_df, train_neigh, test_neigh
+        )
+        print("Features prepared successfully")
+    except Exception as e:
+        print(f"Error preparing features: {e}")
+        return 0
     
     # Combine features for graph
-    all_features = np.vstack([train_features, test_features])
-    all_nei_features = np.vstack([train_neigh_feat, test_neigh_feat])
-    all_labels = np.concatenate([train_labels, test_labels])
+    try:
+        print("Combining features...")
+        all_features = np.vstack([train_features, test_features])
+        all_nei_features = np.vstack([train_neigh_feat, test_neigh_feat])
+        all_labels = np.concatenate([train_labels, test_labels])
+        print(f"Combined features shape: {all_features.shape}")
+        print(f"Combined neighbor features shape: {all_nei_features.shape}")
+    except Exception as e:
+        print(f"Error combining features: {e}")
+        return 0
     
-    # Convert to tensors
-    features = torch.FloatTensor(all_features)
-    nei_features = torch.FloatTensor(all_nei_features)
-    labels = torch.LongTensor(all_labels)
+    # Convert to tensors with memory management
+    try:
+        print("Converting to tensors...")
+        features = torch.FloatTensor(all_features)
+        nei_features = torch.FloatTensor(all_nei_features)
+        labels = torch.LongTensor(all_labels)
+        
+        if torch.cuda.is_available():
+            print(f"GPU memory after tensor creation: {torch.cuda.memory_allocated()/1024**2:.1f}MB")
+        
+        print("Tensors created successfully")
+    except Exception as e:
+        print(f"Error creating tensors: {e}")
+        return 0
     
     # Create train/test indices
     train_idx = torch.arange(len(train_df))
     test_idx = torch.arange(len(train_df), len(train_df) + len(test_df))
+    print(f"Train indices: {len(train_idx):,}, Test indices: {len(test_idx):,}")
     
-    # Initialize model
-    model = FraudRGTAN(
-        in_feats=features.shape[1],
-        hidden_dim=config['hidden_dim'],
-        n_layers=config['n_layers'],
-        n_classes=2,
-        heads=config['heads'],
-        activation=nn.PReLU(),
-        drop=config['dropout'],
-        device=device,
-        nei_feats_dim=nei_features.shape[1]
-    ).to(device)
+    # Initialize model with smaller batch size for memory
+    config['batch_size'] = min(config['batch_size'], 128)  # Reduce batch size
+    print(f"Using batch size: {config['batch_size']}")
+    
+    try:
+        print("Initializing model...")
+        model = FraudRGTAN(
+            in_feats=features.shape[1],
+            hidden_dim=config['hidden_dim'],
+            n_layers=config['n_layers'],
+            n_classes=2,
+            heads=config['heads'],
+            activation=nn.PReLU(),
+            drop=config['dropout'],
+            device=device,
+            nei_feats_dim=nei_features.shape[1]
+        )
+        print("Model initialized successfully")
+        
+        # Move to device with memory management
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        model = model.to(device)
+        print(f"Model moved to {device}")
+        
+        if torch.cuda.is_available():
+            print(f"GPU memory after model creation: {torch.cuda.memory_allocated()/1024**2:.1f}MB")
+            
+    except Exception as e:
+        print(f"Error initializing model: {e}")
+        return 0
     
     # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
@@ -410,19 +481,19 @@ def save_model_and_results(best_model_state, model, test_probs, test_labels, tes
     print(f"Results saved to {results_dir}")
 
 def main():
-    # Configuration
+    # Configuration with memory-safe defaults
     config = {
         'data_path': '/home/development/affdf/fraud_prevention/data',
         'output_path': '/home/development/affdf/fraud_prevention',
-        'hidden_dim': 256,
+        'hidden_dim': 128,  # Reduced from 256 for memory
         'n_layers': 2,
         'heads': [4, 4],
         'dropout': [0.2, 0.1, 0.1],
         'lr': 0.001,
         'weight_decay': 1e-4,
-        'batch_size': 512,
-        'epochs': 50,
-        'patience': 10
+        'batch_size': 64,  # Reduced from 512 for memory
+        'epochs': 10,  # Reduced for faster testing
+        'patience': 5   # Reduced for faster testing
     }
     
     # Train model
