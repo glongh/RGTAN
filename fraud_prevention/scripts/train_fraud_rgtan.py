@@ -70,8 +70,7 @@ class FraudRGTAN(nn.Module):
             out_hidden = hidden_dim
             
             self.layers.append(TransformerConv(
-                in_hidden, out_hidden // heads[i], heads[i],
-                dropout=drop[i], edge_drop=0.0
+                in_hidden, out_hidden // heads[i], heads[i]
             ))
             self.norms.append(nn.LayerNorm(out_hidden))
         
