@@ -14,19 +14,56 @@ from datetime import datetime
 
 def load_config():
     """Load configuration"""
-    config_path = '../config/fraud_config.yaml'
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    return config
+    config_paths = [
+        '../config/fraud_config.yaml',
+        'config/fraud_config.yaml',
+        '/home/development/affdf/fraud_prevention/config/fraud_config.yaml'
+    ]
+    
+    for config_path in config_paths:
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+            return config
+    
+    # Default config if no file found
+    print("Warning: No config file found, using defaults")
+    return {
+        'data': {
+            'data_path': '/home/development/affdf/fraud_prevention/data'
+        }
+    }
 
 def validate_data_consistency():
     """Validate that all data components are consistent"""
     print("=== Pipeline Data Validation ===")
     
     config = load_config()
-    data_path = config['data']['data_path']
-    if not os.path.exists(data_path):
-        data_path = '../data'  # Fallback
+    configured_path = config['data']['data_path']
+    
+    # Try multiple possible data paths
+    possible_paths = [
+        configured_path,
+        '../data',
+        '/home/development/affdf/fraud_prevention/data',
+        'data',
+        '/home/development/affdf/data'
+    ]
+    
+    data_path = None
+    for path in possible_paths:
+        if os.path.exists(path):
+            print(f"Checking data path: {path}")
+            # Check if it has the required processed files
+            if os.path.exists(os.path.join(path, 'processed')):
+                data_path = path
+                break
+    
+    if data_path is None:
+        print("Error: No valid data path found")
+        return False
+    
+    print(f"Using data path: {data_path}")
     
     issues = []
     

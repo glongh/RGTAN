@@ -70,7 +70,8 @@ class FraudRGTAN(nn.Module):
             out_hidden = hidden_dim
             
             self.layers.append(TransformerConv(
-                in_hidden, out_hidden // heads[i], heads[i]
+                in_hidden, out_hidden // heads[i], heads[i],
+                allow_zero_in_degree=True  # Allow nodes with no incoming edges
             ))
             self.norms.append(nn.LayerNorm(out_hidden))
         
@@ -277,6 +278,10 @@ def train_fraud_model(config):
         graphs, _ = dgl.load_graphs(os.path.join(data_path, 'graph/transaction_graph.dgl'))
         g = graphs[0]
         print(f"Graph loaded: {g.num_nodes():,} nodes, {g.num_edges():,} edges")
+        
+        # Add self-loops to handle isolated nodes
+        g = dgl.add_self_loop(g)
+        print(f"After adding self-loops: {g.num_nodes():,} nodes, {g.num_edges():,} edges")
         
         # Check if graph size matches data size
         total_transactions = len(train_df) + len(test_df)
