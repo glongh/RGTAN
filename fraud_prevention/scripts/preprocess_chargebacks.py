@@ -193,13 +193,31 @@ def save_processed_data(train_df, test_df, entity_stats, label_encoders, output_
     print(f"Data saved to {output_path}")
 
 def main():
-    # Paths
-    data_path = '../data'
-    output_path = '../data/processed'
+    # Paths - try multiple locations
+    possible_data_paths = [
+        '../data',           # From scripts directory
+        '../../data',        # From fraud_prevention directory
+        '../../../data',     # From deeper directory
+        '/home/development/affdf/data',  # Absolute path
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '..', 'data')  # Relative to script
+    ]
     
-    # Check if data directory exists
-    if not os.path.exists(data_path):
-        data_path = '../../data'  # Try parent directory
+    data_path = None
+    for path in possible_data_paths:
+        if os.path.exists(path) and os.path.exists(os.path.join(path, 'dispute_chargeback_20250612.csv')):
+            data_path = path
+            print(f"Found data directory at: {os.path.abspath(path)}")
+            break
+    
+    if data_path is None:
+        print("Error: Cannot find data directory with required CSV files")
+        print("Searched in:")
+        for path in possible_data_paths:
+            print(f"  - {os.path.abspath(path)}")
+        sys.exit(1)
+    
+    output_path = os.path.join(os.path.dirname(data_path), 'fraud_prevention', 'data', 'processed')
+    os.makedirs(output_path, exist_ok=True)
     
     # Load and merge data
     df = load_and_merge_data(data_path)

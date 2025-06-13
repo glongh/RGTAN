@@ -245,9 +245,13 @@ def save_graph_data(g, train_neigh, test_neigh, combined_df, output_path):
     print(f"Graph data saved to {output_path}")
 
 def main():
+    # Find the fraud_prevention directory
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    fraud_dir = os.path.dirname(script_dir)
+    
     # Paths
-    data_path = '../data/processed'
-    output_path = '../data/graph'
+    data_path = os.path.join(fraud_dir, 'data', 'processed')
+    output_path = os.path.join(fraud_dir, 'data', 'graph')
     
     # Load processed data
     print("Loading processed data...")
