@@ -15,11 +15,15 @@ import logging
 
 def setup_logging():
     """Setup logging configuration"""
+    # Create logs directory if it doesn't exist
+    log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+    
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler('../logs/pipeline.log'),
+            logging.FileHandler(os.path.join(log_dir, 'pipeline.log')),
             logging.StreamHandler(sys.stdout)
         ]
     )

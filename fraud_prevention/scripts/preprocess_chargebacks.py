@@ -24,7 +24,7 @@ def hash_sensitive_data(value):
         return 'MISSING'
     return hashlib.sha256(str(value).encode()).hexdigest()[:16]
 
-def load_and_merge_data(data_path, date_suffix='20250606'):
+def load_and_merge_data(data_path, date_suffix='20250612'):
     """Load chargeback and ok transaction data"""
     print("Loading transaction data...")
     
