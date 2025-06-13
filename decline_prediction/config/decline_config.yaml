@@ -5,8 +5,8 @@
 data:
   # Paths to input data files
   data_path: "../data"
-  denied_file: "denied_transactions_20250609.csv"
-  approved_file: "ok_transactions_20250606.csv"
+  denied_file: "denied_transactions_20250612.csv"
+  approved_file: "ok_transactions_20250612.csv"
   
   # Preprocessing settings
   temporal_split_days: 15  # Days for test set (shorter for real-time simulation)
