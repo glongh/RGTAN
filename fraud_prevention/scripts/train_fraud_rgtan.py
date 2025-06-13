@@ -278,6 +278,32 @@ def train_fraud_model(config):
         g = graphs[0]
         print(f"Graph loaded: {g.num_nodes():,} nodes, {g.num_edges():,} edges")
         
+        # Check if graph size matches data size
+        total_transactions = len(train_df) + len(test_df)
+        if g.num_nodes() != total_transactions:
+            print(f"WARNING: Graph nodes ({g.num_nodes():,}) != Total transactions ({total_transactions:,})")
+            print("The graph was created with sampled data. Adjusting data to match graph size...")
+            
+            # Use only the transactions that match the graph size
+            if g.num_nodes() == len(train_neigh) + len(test_neigh):
+                # Graph matches the neighborhood features (sampled data)
+                print("Using sampled data that matches the graph...")
+                
+                # Load the combined transactions file that matches the graph
+                combined_path = os.path.join(data_path, 'graph/combined_transactions.csv')
+                if os.path.exists(combined_path):
+                    combined_df = pd.read_csv(combined_path)
+                    train_size = len(train_neigh)
+                    train_df = combined_df.iloc[:train_size].copy()
+                    test_df = combined_df.iloc[train_size:].copy()
+                    print(f"Adjusted - Train: {len(train_df):,}, Test: {len(test_df):,}")
+                else:
+                    print("ERROR: Combined transactions file not found!")
+                    return 0
+            else:
+                print("ERROR: Graph size doesn't match any expected data size!")
+                return 0
+        
         if torch.cuda.is_available():
             print(f"GPU memory after loading graph: {torch.cuda.memory_allocated()/1024**2:.1f}MB")
     except Exception as e:
@@ -327,6 +353,23 @@ def train_fraud_model(config):
     train_idx = torch.arange(len(train_df))
     test_idx = torch.arange(len(train_df), len(train_df) + len(test_df))
     print(f"Train indices: {len(train_idx):,}, Test indices: {len(test_idx):,}")
+    
+    # Final validation: ensure all sizes match
+    total_data = len(train_df) + len(test_df)
+    print(f"\nFinal validation:")
+    print(f"  Graph nodes: {g.num_nodes():,}")
+    print(f"  Total data: {total_data:,}")
+    print(f"  Features: {all_features.shape[0]:,}")
+    print(f"  Neighbor features: {all_nei_features.shape[0]:,}")
+    print(f"  Max train index: {train_idx.max()}")
+    print(f"  Max test index: {test_idx.max()}")
+    
+    if not (g.num_nodes() == total_data == all_features.shape[0] == all_nei_features.shape[0]):
+        print("ERROR: Size mismatch detected!")
+        print("This will cause index out-of-bounds errors during training.")
+        return 0
+    else:
+        print("✓ All sizes match - proceeding with training")
     
     # Initialize model with smaller batch size for memory
     config['batch_size'] = min(config['batch_size'], 128)  # Reduce batch size
