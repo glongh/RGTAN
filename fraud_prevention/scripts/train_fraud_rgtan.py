@@ -523,24 +523,86 @@ def save_model_and_results(best_model_state, model, test_probs, test_labels, tes
     print(f"Model saved to {model_path}")
     print(f"Results saved to {results_dir}")
 
+def load_config():
+    """Load configuration from YAML file"""
+    import yaml
+    
+    # Try to find config file
+    config_paths = [
+        '../config/fraud_config.yaml',
+        'config/fraud_config.yaml',
+        '/home/development/affdf/fraud_prevention/config/fraud_config.yaml'
+    ]
+    
+    config = None
+    for config_path in config_paths:
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+            print(f"Loaded config from: {config_path}")
+            break
+    
+    if config is None:
+        print("Warning: No config file found, using defaults")
+        config = {
+            'data': {'data_path': '../data'},
+            'model': {
+                'hidden_dim': 128,
+                'n_layers': 2,
+                'heads': [4, 4],
+                'dropout': [0.2, 0.1, 0.1],
+                'learning_rate': 0.001,
+                'weight_decay': 1e-4,
+                'batch_size': 64,
+                'epochs': 10,
+                'patience': 5
+            }
+        }
+    
+    # Ensure we have data path
+    data_path = config['data']['data_path']
+    if not os.path.exists(data_path):
+        # Try alternative paths
+        alternative_paths = [
+            '../data',
+            '/home/development/affdf/fraud_prevention/data',
+            'data'
+        ]
+        for alt_path in alternative_paths:
+            if os.path.exists(alt_path):
+                config['data']['data_path'] = alt_path
+                print(f"Using alternative data path: {alt_path}")
+                break
+    
+    return config
+
 def main():
-    # Configuration with memory-safe defaults
-    config = {
-        'data_path': '/home/development/affdf/fraud_prevention/data',
+    # Load configuration from YAML
+    config = load_config()
+    
+    # Extract model config with memory-safe defaults
+    model_config = config['model']
+    training_config = {
+        'data_path': config['data']['data_path'],
         'output_path': '/home/development/affdf/fraud_prevention',
-        'hidden_dim': 128,  # Reduced from 256 for memory
-        'n_layers': 2,
-        'heads': [4, 4],
-        'dropout': [0.2, 0.1, 0.1],
-        'lr': 0.001,
-        'weight_decay': 1e-4,
-        'batch_size': 64,  # Reduced from 512 for memory
-        'epochs': 10,  # Reduced for faster testing
-        'patience': 5   # Reduced for faster testing
+        'hidden_dim': min(model_config.get('hidden_dim', 256), 128),  # Cap for memory
+        'n_layers': model_config.get('n_layers', 2),
+        'heads': model_config.get('heads', [4, 4]),
+        'dropout': model_config.get('dropout', [0.2, 0.1, 0.1]),
+        'lr': model_config.get('learning_rate', 0.001),
+        'weight_decay': model_config.get('weight_decay', 1e-4),
+        'batch_size': min(model_config.get('batch_size', 256), 64),  # Cap for memory
+        'epochs': min(model_config.get('epochs', 50), 10),  # Cap for testing
+        'patience': min(model_config.get('patience', 10), 5)  # Cap for testing
     }
     
+    print("=== Training Configuration ===")
+    for key, value in training_config.items():
+        print(f"{key}: {value}")
+    print("=" * 30)
+    
     # Train model
-    best_auc = train_fraud_model(config)
+    best_auc = train_fraud_model(training_config)
     
     print(f"\nTraining complete! Best test AUC: {best_auc:.4f}")
 

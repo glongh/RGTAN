@@ -115,22 +115,73 @@ def preprocess_features(df):
     return df, label_encoders
 
 def create_temporal_splits(df, test_days=30):
-    """Create temporal train/test splits"""
+    """Create temporal train/test splits with validation"""
     print("\nCreating temporal splits...")
+    
+    # Convert to datetime and sort
+    df['issue_date'] = pd.to_datetime(df['issue_date'])
+    df = df.sort_values('issue_date').reset_index(drop=True)
     
     # Calculate cutoff date
     max_date = df['issue_date'].max()
+    min_date = df['issue_date'].min()
     cutoff_date = max_date - timedelta(days=test_days)
     
-    # Split data
+    print(f"Data range: {min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}")
+    print(f"Proposed cutoff: {cutoff_date.strftime('%Y-%m-%d')}")
+    
+    # Validate cutoff date
+    if cutoff_date <= min_date:
+        print("WARNING: Cutoff date too early, using 70/30 split instead")
+        split_idx = int(len(df) * 0.7)
+        cutoff_date = df.iloc[split_idx]['issue_date']
+        print(f"Adjusted cutoff: {cutoff_date.strftime('%Y-%m-%d')}")
+    
+    # Create split ensuring strict temporal order
     train_mask = df['issue_date'] < cutoff_date
     train_df = df[train_mask].copy()
     test_df = df[~train_mask].copy()
     
-    print(f"Train period: {train_df['issue_date'].min()} to {train_df['issue_date'].max()}")
-    print(f"Test period: {test_df['issue_date'].min()} to {test_df['issue_date'].max()}")
-    print(f"Train size: {len(train_df)} ({train_df['is_fraud'].mean():.2%} fraud)")
-    print(f"Test size: {len(test_df)} ({test_df['is_fraud'].mean():.2%} fraud)")
+    # Validation checks
+    if len(train_df) == 0:
+        raise ValueError("No training data after temporal split")
+    if len(test_df) == 0:
+        raise ValueError("No test data after temporal split")
+    
+    # Check for temporal leakage
+    train_max = train_df['issue_date'].max()
+    test_min = test_df['issue_date'].min()
+    
+    if train_max >= test_min:
+        print(f"WARNING: Potential temporal leakage detected!")
+        print(f"Train max date: {train_max}")
+        print(f"Test min date: {test_min}")
+        
+        # Fix by using strict less-than
+        train_mask = df['issue_date'] < test_min
+        train_df = df[train_mask].copy()
+        test_df = df[~train_mask].copy()
+        print("Fixed temporal split to ensure no leakage")
+    
+    # Reset indices and add transaction IDs
+    train_df = train_df.reset_index(drop=True)
+    test_df = test_df.reset_index(drop=True)
+    train_df['trans_id'] = range(len(train_df))
+    test_df['trans_id'] = range(len(test_df))
+    
+    # Final validation
+    train_max_final = train_df['issue_date'].max()
+    test_min_final = test_df['issue_date'].min()
+    
+    print(f"Final split validation:")
+    print(f"  Train period: {train_df['issue_date'].min().strftime('%Y-%m-%d')} to {train_max_final.strftime('%Y-%m-%d')}")
+    print(f"  Test period: {test_min_final.strftime('%Y-%m-%d')} to {test_df['issue_date'].max().strftime('%Y-%m-%d')}")
+    print(f"  Train size: {len(train_df):,} ({train_df['is_fraud'].mean():.2%} fraud)")
+    print(f"  Test size: {len(test_df):,} ({test_df['is_fraud'].mean():.2%} fraud)")
+    print(f"  Temporal gap: {(test_min_final - train_max_final).days} days")
+    
+    # Assert no temporal leakage
+    assert train_max_final < test_min_final, f"Temporal leakage: train max ({train_max_final}) >= test min ({test_min_final})"
     
     return train_df, test_df
 
