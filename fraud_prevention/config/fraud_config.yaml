@@ -43,9 +43,9 @@ business:
   average_chargeback_cost: 67.66
   average_transaction_value: 11.04
   false_positive_review_cost: 11.38
-  high_risk_threshold: 0.7
-  medium_risk_threshold: 0.4
-  low_risk_threshold: 0.2
+  high_risk_threshold: 0.9
+  medium_risk_threshold: 0.8
+  low_risk_threshold: 0.7
   batch_prediction_hours: 24
   max_batch_size: 10000
   max_daily_reviews: 1000
